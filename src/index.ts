@@ -29,16 +29,21 @@ app.post('/auth/login', async (req: Request, res: Response) => {
   } catch (error) { res.status(500).json({ error: "Erro interno." }); }
 });
 
-// --- 2. CONTADOR MANUAL ---
+// --- 2. CONTADOR MANUAL (CORRIGIDO COM GÊNERO) ---
 app.post('/count', async (req: Request, res: Response) => {
-  const { checkpointId, type, church, quantity, ageGroup } = req.body;
+  // ADICIONEI 'gender' AQUI
+  const { checkpointId, type, church, quantity, ageGroup, gender } = req.body;
+
   if (!checkpointId || !type) return res.status(400).json({ error: "Dados faltando" });
 
   try {
     const entry = await prisma.manualEntry.create({
       data: {
         checkpointId,
-        type, church, ageGroup: ageGroup || 'ADULTO',
+        type,
+        church,
+        ageGroup: ageGroup || 'ADULTO',
+        gender: gender || 'M', // ADICIONEI O GÊNERO AQUI
         quantity: quantity || 1,
         timestamp: new Date()
       }
@@ -113,9 +118,9 @@ app.get('/dashboard', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Erro no dashboard" }); }
 });
 
+// --- 5. SETUP (Locais + Admin) ---
 app.get('/setup', async (req, res) => {
   try {
-    // 1. Criar os Locais
     await prisma.checkpoint.createMany({
       data: [
         { name: "Recepção / Entrada", category: "GENERAL" },
@@ -127,18 +132,16 @@ app.get('/setup', async (req, res) => {
       skipDuplicates: true
     });
 
-    // 2. Criar o SEU Usuário Admin (Mude os dados aqui se quiser)
-    const adminEmail = "davi@ibmg.com"; // <--- SEU EMAIL AQUI
+    const adminEmail = "davi@ibmg.com";
 
-    // O upsert cria se não existir, ou não faz nada se já existir
     const admin = await prisma.person.upsert({
       where: { email: adminEmail },
-      update: { role: 'STAFF' }, // Garante que é STAFF
+      update: { role: 'STAFF' },
       create: {
         name: "Davi Admin",
         email: adminEmail,
         type: "MEMBER",
-        role: "STAFF", // Importante: Dá permissão de acesso
+        role: "STAFF",
         church: "Ibmg Sede",
         age: 25
       }
@@ -149,6 +152,8 @@ app.get('/setup', async (req, res) => {
     res.status(500).send("Erro no setup: " + error);
   }
 });
+
+// --- UTILS ---
 app.post('/register', async (req, res) => {
   const { name, email, type, church, age } = req.body;
   try {
@@ -159,7 +164,6 @@ app.post('/register', async (req, res) => {
   } catch (e) { res.status(400).json({ error: "Erro no cadastro." }); }
 });
 
-// Utilitários
 app.get('/checkpoints', async (req, res) => {
   const spots = await prisma.checkpoint.findMany();
   res.json(spots);
@@ -169,7 +173,7 @@ app.get('/people', async (req, res) => {
   const { search } = req.query;
   if (!search) return res.json([]);
   const people = await prisma.person.findMany({
-    where: { name: { contains: String(search), mode: 'insensitive' } }, // Mode insensitive funciona no Postgres
+    where: { name: { contains: String(search), mode: 'insensitive' } },
     take: 10
   });
   res.json(people);
@@ -188,13 +192,13 @@ app.get('/make-admin', async (req, res) => {
   res.send("OK");
 });
 
-app.listen(PORT, () => { console.log(`🔥 Servidor Neon rodando na porta ${PORT}`); });
-
+// --- INICIALIZAÇÃO CORRIGIDA ---
+// Só inicia o servidor se NÃO for Vercel (Produção Serverless)
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🔥 Servidor local rodando na porta ${PORT}`);
   });
 }
 
-// Exporta o app para a Vercel (Isso é obrigatório)
+// Exporta para Vercel
 export default app;
