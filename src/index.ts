@@ -170,3 +170,12 @@ app.get('/make-admin', async (req, res) => {
 });
 
 app.listen(PORT, () => { console.log(`🔥 Servidor Neon rodando na porta ${PORT}`); });
+
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`🔥 Servidor local rodando na porta ${PORT}`);
+  });
+}
+
+// Exporta o app para a Vercel (Isso é obrigatório)
+export default app;
