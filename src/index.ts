@@ -113,9 +113,9 @@ app.get('/dashboard', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Erro no dashboard" }); }
 });
 
-// --- 5. SETUP (Agora usando createMany do Postgres) ---
 app.get('/setup', async (req, res) => {
   try {
+    // 1. Criar os Locais
     await prisma.checkpoint.createMany({
       data: [
         { name: "Recepção / Entrada", category: "GENERAL" },
@@ -124,12 +124,31 @@ app.get('/setup', async (req, res) => {
         { name: "Kombi Evangelista", category: "EVANGELISM" },
         { name: "Tenda de Oração", category: "PRAYER" },
       ],
-      skipDuplicates: true // Funciona no Postgres!
+      skipDuplicates: true
     });
-    res.send("✅ Locais criados no Neon DB!");
-  } catch (error) { res.status(500).send("Erro: " + error); }
-});
 
+    // 2. Criar o SEU Usuário Admin (Mude os dados aqui se quiser)
+    const adminEmail = "davi@ibmg.com"; // <--- SEU EMAIL AQUI
+
+    // O upsert cria se não existir, ou não faz nada se já existir
+    const admin = await prisma.person.upsert({
+      where: { email: adminEmail },
+      update: { role: 'STAFF' }, // Garante que é STAFF
+      create: {
+        name: "Davi Admin",
+        email: adminEmail,
+        type: "MEMBER",
+        role: "STAFF", // Importante: Dá permissão de acesso
+        church: "Ibmg Sede",
+        age: 25
+      }
+    });
+
+    res.send(`✅ Setup Concluído!<br>Locais criados.<br>Admin criado: <b>${admin.email}</b>`);
+  } catch (error) {
+    res.status(500).send("Erro no setup: " + error);
+  }
+});
 app.post('/register', async (req, res) => {
   const { name, email, type, church, age } = req.body;
   try {
