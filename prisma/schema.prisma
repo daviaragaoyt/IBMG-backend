@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" 
+  url      = env("DATABASE_URL")
+}
+
+model Person {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?  @unique
+  phone     String?
+  type      String   @default("VISITOR")
+  role      String   @default("PARTICIPANT")
+  church    String?
+ 
+  age       Int?     
+  
+  createdAt DateTime @default(now())
+
+  movements Movement[]
+}
+
+model Checkpoint {
+  id            String   @id @default(uuid())
+  name          String   
+  category      String   @default("GENERAL") 
+  movements     Movement[]
+  manualEntries ManualEntry[]
+}
+
+model Movement {
+  id           String   @id @default(uuid())
+  timestamp    DateTime @default(now())
+  personId     String
+  person       Person     @relation(fields: [personId], references: [id])
+  checkpointId String
+  checkpoint   Checkpoint @relation(fields: [checkpointId], references: [id])
+}
+
+model ManualEntry {
+  id           String   @id @default(uuid())
+  timestamp    DateTime @default(now())
+  type         String   
+  church       String?  
+
+  ageGroup     String?  
+  
+  quantity     Int      @default(1)
+
+  checkpointId String
+  checkpoint   Checkpoint @relation(fields: [checkpointId], references: [id])
+}
