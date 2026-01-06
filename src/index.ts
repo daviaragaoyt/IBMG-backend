@@ -279,6 +279,44 @@ app.get('/export', async (req, res) => {
   } catch (error) { res.status(500).send("Erro ao gerar relatório"); }
 });
 
+app.get('/people/incomplete', async (req, res) => {
+  try {
+    const people = await prisma.person.findMany({
+      where: {
+        OR: [
+          { gender: null },
+          { phone: null },
+          { marketingSource: null },
+          { age: null }
+        ]
+      },
+      orderBy: { name: 'asc' },
+      take: 50
+    });
+    res.json(people);
+  } catch (error) { res.status(500).json({ error: "Erro ao buscar pendências" }); }
+});
+
+// 2. Atualiza os dados da pessoa (Usado na Aba Pendências e no Scanner)
+app.put('/person/:id', async (req, res) => {
+  const { id } = req.params;
+  const { gender, phone, marketingSource, age, church } = req.body;
+
+  try {
+    const updated = await prisma.person.update({
+      where: { id },
+      data: {
+        gender: gender || undefined,
+        phone: phone || undefined,
+        marketingSource: marketingSource || undefined,
+        age: age ? parseInt(age) : undefined,
+        church: church || undefined
+      }
+    });
+    res.json(updated);
+  } catch (error) { res.status(500).json({ error: "Erro ao atualizar." }); }
+});
+
 // --- INICIALIZAÇÃO ---
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
