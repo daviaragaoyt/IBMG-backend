@@ -93,10 +93,10 @@ app.post('/track', async (req: Request, res: Response) => {
     return res.json({ success: true, status: 'SUCCESS', person: newMove.person, message: `✅ Acesso Liberado!` });
   } catch (error) { res.status(500).json({ success: false }); }
 });
-
 app.get('/dashboard', async (req, res) => {
   try {
-    // DATA: Usando 01/01/2026 para testes. No evento, mude para 2026-02-13
+    // ⚠️ MODO TESTE: Pegando desde o inicio do ano para você ver os dados de HOJE.
+    // Quando for o evento real, mude para '2026-02-13T00:00:00'
     const eventStart = new Date('2026-01-01T00:00:00');
     const eventEnd = new Date('2026-02-17T23:59:59');
 
@@ -116,52 +116,38 @@ app.get('/dashboard', async (req, res) => {
       })
     ]);
 
-    // 2. Unificando os dados (CORREÇÃO DO ERRO AQUI)
+    // 2. Unificando os dados
     const allEntries = [
       ...manualEntries.map(e => ({
-        timestamp: e.timestamp,
-        quantity: e.quantity,
-        type: e.type,
-        gender: e.gender,
-        ageGroup: e.ageGroup,
-        church: e.church, // <--- ADICIONADO: Agora existe nos dois tipos!
-        marketing: null,
-        source: 'MANUAL',
+        timestamp: e.timestamp, quantity: e.quantity, type: e.type, gender: e.gender,
+        ageGroup: e.ageGroup, church: e.church, marketing: null, source: 'MANUAL',
         checkpointName: e.checkpoint?.name || 'Indefinido'
       })),
       ...scannerEntries.map(e => ({
-        timestamp: e.timestamp,
-        quantity: 1,
-        type: e.person.type,
-        gender: e.person.gender,
+        timestamp: e.timestamp, quantity: 1, type: e.person.type, gender: e.person.gender,
         ageGroup: e.person.age ? (e.person.age < 12 ? 'CRIANCA' : e.person.age < 18 ? 'JOVEM' : 'ADULTO') : 'ADULTO',
-        church: e.person.church,
-        marketing: e.person.marketingSource,
-        source: 'SCANNER',
+        church: e.person.church, marketing: e.person.marketingSource, source: 'SCANNER',
         checkpointName: e.checkpoint?.name || 'Indefinido'
       }))
     ];
 
     // 3. Totais Globais
     const total = allEntries.reduce((acc, curr) => acc + curr.quantity, 0);
-
     const byType = {
       MEMBER: allEntries.filter(e => e.type === 'MEMBER').reduce((acc, e) => acc + e.quantity, 0),
       VISITOR: allEntries.filter(e => e.type === 'VISITOR').reduce((acc, e) => acc + e.quantity, 0)
     };
-
     const byGender = {
       M: allEntries.filter(e => e.gender === 'M').reduce((acc, e) => acc + e.quantity, 0),
       F: allEntries.filter(e => e.gender === 'F').reduce((acc, e) => acc + e.quantity, 0)
     };
-
     const byAge = {
       CRIANCA: allEntries.filter(e => e.ageGroup === 'CRIANCA').reduce((acc, e) => acc + e.quantity, 0),
       JOVEM: allEntries.filter(e => e.ageGroup === 'JOVEM').reduce((acc, e) => acc + e.quantity, 0),
       ADULTO: allEntries.filter(e => e.ageGroup === 'ADULTO').reduce((acc, e) => acc + e.quantity, 0),
     };
 
-    // 4. CRUZAMENTO DE DADOS (LINHA DO TEMPO + CHECKPOINTS)
+    // 4. CRUZAMENTO DE DADOS
     const timeline: Record<string, Record<string, number>> = {};
     const checkpointsData: Record<string, Record<string, any>> = {};
 
@@ -171,12 +157,12 @@ app.get('/dashboard', async (req, res) => {
       const hour = date.getHours().toString();
       const local = e.checkpointName;
 
-      // Timeline Logic
+      // Timeline
       if (!timeline[day]) timeline[day] = {};
       if (!timeline[day][hour]) timeline[day][hour] = 0;
       timeline[day][hour] += e.quantity;
 
-      // Checkpoint Logic (CRUZAMENTO COMPLETO)
+      // Checkpoint Detalhado
       if (!checkpointsData[day]) checkpointsData[day] = {};
       if (!checkpointsData[day][local]) {
         checkpointsData[day][local] = {
@@ -189,39 +175,151 @@ app.get('/dashboard', async (req, res) => {
 
       const stats = checkpointsData[day][local];
       stats.total += e.quantity;
-
-      if (e.gender === 'M') stats.gender.M += e.quantity;
-      else if (e.gender === 'F') stats.gender.F += e.quantity;
-
-      if (e.ageGroup === 'CRIANCA') stats.age.CRIANCA += e.quantity;
-      else if (e.ageGroup === 'JOVEM') stats.age.JOVEM += e.quantity;
-      else stats.age.ADULTO += e.quantity;
-
-      if (e.type === 'MEMBER') stats.type.MEMBER += e.quantity;
-      else stats.type.VISITOR += e.quantity;
+      if (e.gender === 'M') stats.gender.M += e.quantity; else if (e.gender === 'F') stats.gender.F += e.quantity;
+      if (e.ageGroup === 'CRIANCA') stats.age.CRIANCA += e.quantity; else if (e.ageGroup === 'JOVEM') stats.age.JOVEM += e.quantity; else stats.age.ADULTO += e.quantity;
+      if (e.type === 'MEMBER') stats.type.MEMBER += e.quantity; else stats.type.VISITOR += e.quantity;
     });
 
-    // Top Igrejas
     const churchMap = new Map();
-    allEntries.forEach(e => {
-      if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity);
-    });
+    allEntries.forEach(e => { if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity); });
     const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
 
-    // Marketing
     const marketingMap = new Map();
-    allEntries.forEach(e => {
-      if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1);
-    });
+    allEntries.forEach(e => { if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1); });
     const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
     res.json({ total, timeline, checkpointsData, byType, byGender, byAge, byChurch, bySource });
 
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Erro no dashboard" });
-  }
+  } catch (error) { console.error(error); res.status(500).json({ error: "Erro no dashboard" }); }
 });
+// app.get('/dashboard', async (req, res) => {
+//   try {
+//     // DATA: Usando 01/01/2026 para testes. No evento, mude para 2026-02-13
+//     const eventStart = new Date('2026-01-01T00:00:00');
+//     const eventEnd = new Date('2026-02-17T23:59:59');
+
+//     // 1. Buscando TUDO
+//     const [manualEntries, scannerEntries] = await Promise.all([
+//       prisma.manualEntry.findMany({
+//         where: { timestamp: { gte: eventStart, lte: eventEnd } },
+//         include: { checkpoint: { select: { name: true } } }
+//       }),
+//       prisma.movement.findMany({
+//         where: { timestamp: { gte: eventStart, lte: eventEnd } },
+//         select: {
+//           timestamp: true,
+//           checkpoint: { select: { name: true } },
+//           person: { select: { type: true, gender: true, age: true, church: true, marketingSource: true } }
+//         }
+//       })
+//     ]);
+
+//     // 2. Unificando os dados (CORREÇÃO DO ERRO AQUI)
+//     const allEntries = [
+//       ...manualEntries.map(e => ({
+//         timestamp: e.timestamp,
+//         quantity: e.quantity,
+//         type: e.type,
+//         gender: e.gender,
+//         ageGroup: e.ageGroup,
+//         church: e.church, // <--- ADICIONADO: Agora existe nos dois tipos!
+//         marketing: null,
+//         source: 'MANUAL',
+//         checkpointName: e.checkpoint?.name || 'Indefinido'
+//       })),
+//       ...scannerEntries.map(e => ({
+//         timestamp: e.timestamp,
+//         quantity: 1,
+//         type: e.person.type,
+//         gender: e.person.gender,
+//         ageGroup: e.person.age ? (e.person.age < 12 ? 'CRIANCA' : e.person.age < 18 ? 'JOVEM' : 'ADULTO') : 'ADULTO',
+//         church: e.person.church,
+//         marketing: e.person.marketingSource,
+//         source: 'SCANNER',
+//         checkpointName: e.checkpoint?.name || 'Indefinido'
+//       }))
+//     ];
+
+//     // 3. Totais Globais
+//     const total = allEntries.reduce((acc, curr) => acc + curr.quantity, 0);
+
+//     const byType = {
+//       MEMBER: allEntries.filter(e => e.type === 'MEMBER').reduce((acc, e) => acc + e.quantity, 0),
+//       VISITOR: allEntries.filter(e => e.type === 'VISITOR').reduce((acc, e) => acc + e.quantity, 0)
+//     };
+
+//     const byGender = {
+//       M: allEntries.filter(e => e.gender === 'M').reduce((acc, e) => acc + e.quantity, 0),
+//       F: allEntries.filter(e => e.gender === 'F').reduce((acc, e) => acc + e.quantity, 0)
+//     };
+
+//     const byAge = {
+//       CRIANCA: allEntries.filter(e => e.ageGroup === 'CRIANCA').reduce((acc, e) => acc + e.quantity, 0),
+//       JOVEM: allEntries.filter(e => e.ageGroup === 'JOVEM').reduce((acc, e) => acc + e.quantity, 0),
+//       ADULTO: allEntries.filter(e => e.ageGroup === 'ADULTO').reduce((acc, e) => acc + e.quantity, 0),
+//     };
+
+//     // 4. CRUZAMENTO DE DADOS (LINHA DO TEMPO + CHECKPOINTS)
+//     const timeline: Record<string, Record<string, number>> = {};
+//     const checkpointsData: Record<string, Record<string, any>> = {};
+
+//     allEntries.forEach(e => {
+//       const date = new Date(e.timestamp);
+//       const day = date.getDate().toString();
+//       const hour = date.getHours().toString();
+//       const local = e.checkpointName;
+
+//       // Timeline Logic
+//       if (!timeline[day]) timeline[day] = {};
+//       if (!timeline[day][hour]) timeline[day][hour] = 0;
+//       timeline[day][hour] += e.quantity;
+
+//       // Checkpoint Logic (CRUZAMENTO COMPLETO)
+//       if (!checkpointsData[day]) checkpointsData[day] = {};
+//       if (!checkpointsData[day][local]) {
+//         checkpointsData[day][local] = {
+//           total: 0,
+//           gender: { M: 0, F: 0 },
+//           age: { CRIANCA: 0, JOVEM: 0, ADULTO: 0 },
+//           type: { MEMBER: 0, VISITOR: 0 }
+//         };
+//       }
+
+//       const stats = checkpointsData[day][local];
+//       stats.total += e.quantity;
+
+//       if (e.gender === 'M') stats.gender.M += e.quantity;
+//       else if (e.gender === 'F') stats.gender.F += e.quantity;
+
+//       if (e.ageGroup === 'CRIANCA') stats.age.CRIANCA += e.quantity;
+//       else if (e.ageGroup === 'JOVEM') stats.age.JOVEM += e.quantity;
+//       else stats.age.ADULTO += e.quantity;
+
+//       if (e.type === 'MEMBER') stats.type.MEMBER += e.quantity;
+//       else stats.type.VISITOR += e.quantity;
+//     });
+
+//     // Top Igrejas
+//     const churchMap = new Map();
+//     allEntries.forEach(e => {
+//       if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity);
+//     });
+//     const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
+
+//     // Marketing
+//     const marketingMap = new Map();
+//     allEntries.forEach(e => {
+//       if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1);
+//     });
+//     const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+
+//     res.json({ total, timeline, checkpointsData, byType, byGender, byAge, byChurch, bySource });
+
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ error: "Erro no dashboard" });
+//   }
+// });
 
 // --- 5. SETUP (Locais + Admin) ---
 app.get('/setup', async (req, res) => {
