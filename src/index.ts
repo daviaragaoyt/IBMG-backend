@@ -94,27 +94,53 @@ app.get('/dashboard', async (req, res) => {
     const todayStart = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
 
-    const qrStats = await prisma.movement.groupBy({
-      by: ['checkpointId'],
+    // 1. Buscando todas as entradas de hoje
+    const entries = await prisma.manualEntry.findMany({
       where: { timestamp: { gte: todayStart, lte: todayEnd } },
-      _count: { id: true }
+      include: { checkpoint: true }
     });
 
-    const manualStats = await prisma.manualEntry.groupBy({
-      by: ['checkpointId'],
-      where: { timestamp: { gte: todayStart, lte: todayEnd } },
-      _sum: { quantity: true }
+    // 2. Calculando Totais
+    const total = entries.reduce((acc, curr) => acc + curr.quantity, 0);
+
+    // 3. Agrupamentos Inteligentes
+    const byType = {
+      MEMBER: entries.filter(e => e.type === 'MEMBER').reduce((acc, e) => acc + e.quantity, 0),
+      VISITOR: entries.filter(e => e.type === 'VISITOR').reduce((acc, e) => acc + e.quantity, 0)
+    };
+
+    const byGender = {
+      M: entries.filter(e => e.gender === 'M').reduce((acc, e) => acc + e.quantity, 0),
+      F: entries.filter(e => e.gender === 'F').reduce((acc, e) => acc + e.quantity, 0)
+    };
+
+    const byAge = {
+      CRIANCA: entries.filter(e => e.ageGroup === 'CRIANCA').reduce((acc, e) => acc + e.quantity, 0),
+      JOVEM: entries.filter(e => e.ageGroup === 'JOVEM').reduce((acc, e) => acc + e.quantity, 0),
+      ADULTO: entries.filter(e => e.ageGroup === 'ADULTO').reduce((acc, e) => acc + e.quantity, 0),
+    };
+
+    // 4. Top Igrejas (Visitantes)
+    const churchMap = new Map();
+    entries.forEach(e => {
+      if (e.church) {
+        const current = churchMap.get(e.church) || 0;
+        churchMap.set(e.church, current + e.quantity);
+      }
+    });
+    // Transforma o Map em array para o gráfico
+    const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value) // Ordena do maior para o menor
+      .slice(0, 5); // Pega só o Top 5
+
+    res.json({
+      total,
+      byType,
+      byGender,
+      byAge,
+      byChurch
     });
 
-    const checkpoints = await prisma.checkpoint.findMany();
-
-    const report = checkpoints.map(cp => {
-      const qr = qrStats.find(q => q.checkpointId === cp.id)?._count.id || 0;
-      const manual = manualStats.find(m => m.checkpointId === cp.id)?._sum.quantity || 0;
-      return { name: cp.name, totalToday: qr + manual };
-    });
-
-    res.json({ date: new Date(), stats: report });
   } catch (error) { res.status(500).json({ error: "Erro no dashboard" }); }
 });
 
