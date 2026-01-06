@@ -27,17 +27,16 @@ app.post('/auth/login', async (req: Request, res: Response) => {
     if (user.role !== 'STAFF') return res.status(403).json({ error: "Acesso negado. Apenas Staff." });
     res.json(user);
   } catch (error: any) {
-    console.error("❌ ERRO NO LOGIN:", error); // Mostra no terminal
+    console.error("❌ ERRO NO LOGIN:", error);
     res.status(500).json({
       error: "Erro interno.",
-      details: error.message || String(error) // Manda para o navegador/Postman
+      details: error.message || String(error)
     });
   }
 });
 
-// --- 2. CONTADOR MANUAL (CORRIGIDO COM GÊNERO) ---
+// --- 2. CONTADOR MANUAL ---
 app.post('/count', async (req: Request, res: Response) => {
-  // ADICIONEI 'gender' AQUI
   const { checkpointId, type, church, quantity, ageGroup, gender } = req.body;
 
   if (!checkpointId || !type) return res.status(400).json({ error: "Dados faltando" });
@@ -49,7 +48,7 @@ app.post('/count', async (req: Request, res: Response) => {
         type,
         church,
         ageGroup: ageGroup || 'ADULTO',
-        gender: gender || 'M', // ADICIONEI O GÊNERO AQUI
+        gender: gender || 'M',
         quantity: quantity || 1,
         timestamp: new Date()
       }
@@ -94,7 +93,7 @@ app.post('/track', async (req: Request, res: Response) => {
   } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- 4. DASHBOARD ---
+// --- 4. DASHBOARD (CORRIGIDO) ---
 app.get('/dashboard', async (req, res) => {
   try {
     const todayStart = startOfDay(new Date());
@@ -134,20 +133,37 @@ app.get('/dashboard', async (req, res) => {
         churchMap.set(e.church, current + e.quantity);
       }
     });
-    // Transforma o Map em array para o gráfico
+
     const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value) // Ordena do maior para o menor
-      .slice(0, 5); // Pega só o Top 5
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+
+    // 5. Origem/Marketing (NOVO - LÓGICA QUE FALTAVA)
+    // Busca pessoas cadastradas hoje agrupadas por origem
+    const peopleToday = await prisma.person.groupBy({
+      by: ['marketingSource'],
+      where: { createdAt: { gte: todayStart, lte: todayEnd } },
+      _count: { marketingSource: true }
+    });
+
+    const bySource = peopleToday.map(p => ({
+      name: p.marketingSource || 'Não Informado',
+      value: p._count.marketingSource
+    })).sort((a, b) => b.value - a.value);
 
     res.json({
       total,
       byType,
       byGender,
       byAge,
-      byChurch
+      byChurch,
+      bySource // Agora a variável existe!
     });
 
-  } catch (error) { res.status(500).json({ error: "Erro no dashboard" }); }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro no dashboard" });
+  }
 });
 
 // --- 5. SETUP (Locais + Admin) ---
@@ -185,20 +201,20 @@ app.get('/setup', async (req, res) => {
   }
 });
 
-// --- CADASTRO COMPLETO (ATUALIZADO) ---
+// --- CADASTRO COMPLETO ---
 app.post('/register', async (req, res) => {
-  // Agora recebe gender, phone e isStaff
-  const { name, email, phone, type, church, age, gender, isStaff } = req.body;
+  const { name, email, phone, type, church, age, gender, isStaff, marketingSource } = req.body;
 
   try {
     const user = await prisma.person.create({
       data: {
         name,
         email: email || null,
-        phone: phone || null, // Salva o WhatsApp
+        phone: phone || null,
         type,
         church,
-        gender, // Salva o Gênero (M ou F)
+        gender,
+        marketingSource,
         age: age ? parseInt(age) : null,
         role: isStaff ? 'STAFF' : 'PARTICIPANT'
       }
@@ -235,6 +251,7 @@ app.get('/make-admin', async (req, res) => {
   res.send("OK");
 });
 
+// --- EXPORTAR (ATUALIZADO COM ORIGEM) ---
 app.get('/export', async (req, res) => {
   try {
     // Busca todas as pessoas cadastradas
@@ -242,8 +259,8 @@ app.get('/export', async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    // Cabeçalho do CSV
-    let csv = "Nome,Idade,Tipo,Genero,Igreja,WhatsApp,Data Cadastro\n";
+    // Cabeçalho do CSV (Adicionei Origem)
+    let csv = "Nome,Idade,Tipo,Genero,Igreja,WhatsApp,Origem,Data Cadastro\n";
 
     // Preenche as linhas
     people.forEach(p => {
@@ -251,7 +268,7 @@ app.get('/export', async (req, res) => {
       const cleanName = p.name.replace(/,/g, '');
       const data = new Date(p.createdAt).toLocaleDateString('pt-BR');
 
-      csv += `${cleanName},${p.age || ''},${p.type},${p.gender || ''},${p.church || ''},${p.phone || ''},${data}\n`;
+      csv += `${cleanName},${p.age || ''},${p.type},${p.gender || ''},${p.church || ''},${p.phone || ''},${p.marketingSource || ''},${data}\n`;
     });
 
     // Força o navegador a baixar o arquivo
@@ -262,13 +279,11 @@ app.get('/export', async (req, res) => {
   } catch (error) { res.status(500).send("Erro ao gerar relatório"); }
 });
 
-// --- INICIALIZAÇÃO CORRIGIDA ---
-// Só inicia o servidor se NÃO for Vercel (Produção Serverless)
+// --- INICIALIZAÇÃO ---
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🔥 Servidor local rodando na porta ${PORT}`);
   });
 }
 
-// Exporta para Vercel
 export default app;

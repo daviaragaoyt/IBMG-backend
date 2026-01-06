@@ -17,6 +17,7 @@ model Person {
   church    String?
   gender String?
   age       Int?     
+  marketingSource String?
   createdAt DateTime @default(now())
 
   movements Movement[]
