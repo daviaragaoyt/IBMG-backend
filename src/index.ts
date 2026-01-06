@@ -94,14 +94,14 @@ app.post('/track', async (req: Request, res: Response) => {
   } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- 4. DASHBOARD ---
+// --- 4. DASHBOARD (GLOBAL - DATA E HORA) ---
 app.get('/dashboard', async (req, res) => {
   try {
-    // Definindo o período do evento (13 a 17 de Fev de 2026)
+    // Definindo o período do evento
     const eventStart = new Date('2026-02-13T00:00:00');
     const eventEnd = new Date('2026-02-17T23:59:59');
 
-    // 1. Buscando TUDO (Scanner + Contador Manual) no período
+    // 1. Buscando TUDO
     const [manualEntries, scannerEntries] = await Promise.all([
       prisma.manualEntry.findMany({
         where: { timestamp: { gte: eventStart, lte: eventEnd } },
@@ -113,8 +113,7 @@ app.get('/dashboard', async (req, res) => {
       })
     ]);
 
-    // 2. Unificando os dados para facilitar a contagem
-    // Normalizamos tudo para um array único de "entradas"
+    // 2. Unificando os dados
     const allEntries = [
       ...manualEntries.map(e => ({ ...e, source: 'MANUAL', marketing: null })),
       ...scannerEntries.map(e => ({
@@ -129,25 +128,20 @@ app.get('/dashboard', async (req, res) => {
       }))
     ];
 
-    // 3. Totais Gerais
+    // 3. Totais e Agrupamentos
     const total = allEntries.reduce((acc, curr) => acc + curr.quantity, 0);
 
-    // 4. Agrupamento por DIA e HORA (Para o Gráfico)
-    // Estrutura: { '13': { '19': 50, '20': 100 }, '14': { ... } }
+    // Linha do Tempo (Dia/Hora)
     const timeline: Record<string, Record<string, number>> = {};
-
     allEntries.forEach(e => {
       const date = new Date(e.timestamp);
-      const day = date.getDate().toString(); // 13, 14, 15...
-      const hour = date.getHours().toString(); // 19, 20, 21...
-
+      const day = date.getDate().toString();
+      const hour = date.getHours().toString();
       if (!timeline[day]) timeline[day] = {};
       if (!timeline[day][hour]) timeline[day][hour] = 0;
-
       timeline[day][hour] += e.quantity;
     });
 
-    // 5. Agrupamentos Demográficos (Igual antes, mas com dados unificados)
     const byType = {
       MEMBER: allEntries.filter(e => e.type === 'MEMBER').reduce((acc, e) => acc + e.quantity, 0),
       VISITOR: allEntries.filter(e => e.type === 'VISITOR').reduce((acc, e) => acc + e.quantity, 0)
@@ -158,30 +152,23 @@ app.get('/dashboard', async (req, res) => {
       F: allEntries.filter(e => e.gender === 'F').reduce((acc, e) => acc + e.quantity, 0)
     };
 
+    const byAge = {
+      CRIANCA: allEntries.filter(e => e.ageGroup === 'CRIANCA').reduce((acc, e) => acc + e.quantity, 0),
+      JOVEM: allEntries.filter(e => e.ageGroup === 'JOVEM').reduce((acc, e) => acc + e.quantity, 0),
+      ADULTO: allEntries.filter(e => e.ageGroup === 'ADULTO').reduce((acc, e) => acc + e.quantity, 0),
+    };
+
     // Top Igrejas
     const churchMap = new Map();
-    allEntries.forEach(e => {
-      if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity);
-    });
-    const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value).slice(0, 5);
+    allEntries.forEach(e => { if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity); });
+    const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
 
-    // Marketing (Apenas do Scanner/Cadastro)
+    // Marketing
     const marketingMap = new Map();
-    allEntries.forEach(e => {
-      if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1);
-    });
-    const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
+    allEntries.forEach(e => { if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1); });
+    const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
-    res.json({
-      total,
-      timeline, // <--- O NOVO DADO IMPORTANTE
-      byType,
-      byGender,
-      byChurch,
-      bySource
-    });
+    res.json({ total, timeline, byType, byGender, byAge, byChurch, bySource });
 
   } catch (error) {
     console.error(error);
