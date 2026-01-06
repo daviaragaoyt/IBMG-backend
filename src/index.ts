@@ -26,7 +26,13 @@ app.post('/auth/login', async (req: Request, res: Response) => {
     if (!user) return res.status(404).json({ error: "E-mail não encontrado." });
     if (user.role !== 'STAFF') return res.status(403).json({ error: "Acesso negado. Apenas Staff." });
     res.json(user);
-  } catch (error) { res.status(500).json({ error: "Erro interno." }); }
+  } catch (error: any) {
+    console.error("❌ ERRO NO LOGIN:", error); // Mostra no terminal
+    res.status(500).json({
+      error: "Erro interno.",
+      details: error.message || String(error) // Manda para o navegador/Postman
+    });
+  }
 });
 
 // --- 2. CONTADOR MANUAL (CORRIGIDO COM GÊNERO) ---
