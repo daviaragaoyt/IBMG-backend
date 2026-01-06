@@ -97,65 +97,88 @@ app.post('/track', async (req: Request, res: Response) => {
 // --- 4. DASHBOARD ---
 app.get('/dashboard', async (req, res) => {
   try {
-    const todayStart = startOfDay(new Date());
-    const todayEnd = endOfDay(new Date());
+    // Definindo o período do evento (13 a 17 de Fev de 2026)
+    const eventStart = new Date('2026-02-13T00:00:00');
+    const eventEnd = new Date('2026-02-17T23:59:59');
 
-    // 1. Buscando todas as entradas de hoje
-    const entries = await prisma.manualEntry.findMany({
-      where: { timestamp: { gte: todayStart, lte: todayEnd } },
-      include: { checkpoint: true }
+    // 1. Buscando TUDO (Scanner + Contador Manual) no período
+    const [manualEntries, scannerEntries] = await Promise.all([
+      prisma.manualEntry.findMany({
+        where: { timestamp: { gte: eventStart, lte: eventEnd } },
+        select: { timestamp: true, quantity: true, type: true, gender: true, ageGroup: true, church: true }
+      }),
+      prisma.movement.findMany({
+        where: { timestamp: { gte: eventStart, lte: eventEnd } },
+        select: { timestamp: true, person: { select: { type: true, gender: true, age: true, church: true, marketingSource: true } } }
+      })
+    ]);
+
+    // 2. Unificando os dados para facilitar a contagem
+    // Normalizamos tudo para um array único de "entradas"
+    const allEntries = [
+      ...manualEntries.map(e => ({ ...e, source: 'MANUAL', marketing: null })),
+      ...scannerEntries.map(e => ({
+        timestamp: e.timestamp,
+        quantity: 1,
+        type: e.person.type,
+        gender: e.person.gender,
+        ageGroup: e.person.age ? (e.person.age < 12 ? 'CRIANCA' : e.person.age < 18 ? 'JOVEM' : 'ADULTO') : 'ADULTO',
+        church: e.person.church,
+        marketing: e.person.marketingSource,
+        source: 'SCANNER'
+      }))
+    ];
+
+    // 3. Totais Gerais
+    const total = allEntries.reduce((acc, curr) => acc + curr.quantity, 0);
+
+    // 4. Agrupamento por DIA e HORA (Para o Gráfico)
+    // Estrutura: { '13': { '19': 50, '20': 100 }, '14': { ... } }
+    const timeline: Record<string, Record<string, number>> = {};
+
+    allEntries.forEach(e => {
+      const date = new Date(e.timestamp);
+      const day = date.getDate().toString(); // 13, 14, 15...
+      const hour = date.getHours().toString(); // 19, 20, 21...
+
+      if (!timeline[day]) timeline[day] = {};
+      if (!timeline[day][hour]) timeline[day][hour] = 0;
+
+      timeline[day][hour] += e.quantity;
     });
 
-    // 2. Calculando Totais
-    const total = entries.reduce((acc, curr) => acc + curr.quantity, 0);
-
-    // 3. Agrupamentos Inteligentes
+    // 5. Agrupamentos Demográficos (Igual antes, mas com dados unificados)
     const byType = {
-      MEMBER: entries.filter(e => e.type === 'MEMBER').reduce((acc, e) => acc + e.quantity, 0),
-      VISITOR: entries.filter(e => e.type === 'VISITOR').reduce((acc, e) => acc + e.quantity, 0)
+      MEMBER: allEntries.filter(e => e.type === 'MEMBER').reduce((acc, e) => acc + e.quantity, 0),
+      VISITOR: allEntries.filter(e => e.type === 'VISITOR').reduce((acc, e) => acc + e.quantity, 0)
     };
 
     const byGender = {
-      M: entries.filter(e => e.gender === 'M').reduce((acc, e) => acc + e.quantity, 0),
-      F: entries.filter(e => e.gender === 'F').reduce((acc, e) => acc + e.quantity, 0)
+      M: allEntries.filter(e => e.gender === 'M').reduce((acc, e) => acc + e.quantity, 0),
+      F: allEntries.filter(e => e.gender === 'F').reduce((acc, e) => acc + e.quantity, 0)
     };
 
-    const byAge = {
-      CRIANCA: entries.filter(e => e.ageGroup === 'CRIANCA').reduce((acc, e) => acc + e.quantity, 0),
-      JOVEM: entries.filter(e => e.ageGroup === 'JOVEM').reduce((acc, e) => acc + e.quantity, 0),
-      ADULTO: entries.filter(e => e.ageGroup === 'ADULTO').reduce((acc, e) => acc + e.quantity, 0),
-    };
-
-    // 4. Top Igrejas (Visitantes)
+    // Top Igrejas
     const churchMap = new Map();
-    entries.forEach(e => {
-      if (e.church) {
-        const current = churchMap.get(e.church) || 0;
-        churchMap.set(e.church, current + e.quantity);
-      }
+    allEntries.forEach(e => {
+      if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity);
     });
-
     const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
+      .sort((a, b) => b.value - a.value).slice(0, 5);
 
-    // 5. Origem/Marketing
-    const peopleToday = await prisma.person.groupBy({
-      by: ['marketingSource'],
-      where: { createdAt: { gte: todayStart, lte: todayEnd } },
-      _count: { marketingSource: true }
+    // Marketing (Apenas do Scanner/Cadastro)
+    const marketingMap = new Map();
+    allEntries.forEach(e => {
+      if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1);
     });
-
-    const bySource = peopleToday.map(p => ({
-      name: p.marketingSource || 'Não Informado',
-      value: p._count.marketingSource
-    })).sort((a, b) => b.value - a.value);
+    const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
 
     res.json({
       total,
+      timeline, // <--- O NOVO DADO IMPORTANTE
       byType,
       byGender,
-      byAge,
       byChurch,
       bySource
     });
