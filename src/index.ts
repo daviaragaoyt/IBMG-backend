@@ -98,7 +98,7 @@ app.post('/track', async (req: Request, res: Response) => {
 app.get('/dashboard', async (req, res) => {
   try {
     // Definindo o período do evento
-    const eventStart = new Date('2026-02-13T00:00:00');
+    const eventStart = new Date('2026-01-05T00:00:00');
     const eventEnd = new Date('2026-02-17T23:59:59');
 
     // 1. Buscando TUDO
