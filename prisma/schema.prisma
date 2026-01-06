@@ -15,6 +15,7 @@ model Person {
   type      String   @default("VISITOR") // MEMBER, VISITOR
   role      String   @default("PARTICIPANT") // STAFF, PARTICIPANT
   church    String?
+  gender String?
   age       Int?     
   createdAt DateTime @default(now())
 

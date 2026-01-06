@@ -179,12 +179,23 @@ app.get('/setup', async (req, res) => {
   }
 });
 
-// --- UTILS ---
+// --- CADASTRO COMPLETO (ATUALIZADO) ---
 app.post('/register', async (req, res) => {
-  const { name, email, type, church, age } = req.body;
+  // Agora recebe gender, phone e isStaff
+  const { name, email, phone, type, church, age, gender, isStaff } = req.body;
+
   try {
     const user = await prisma.person.create({
-      data: { name, email: email || null, type, church, age: age ? parseInt(age) : null }
+      data: {
+        name,
+        email: email || null,
+        phone: phone || null, // Salva o WhatsApp
+        type,
+        church,
+        gender, // Salva o Gênero (M ou F)
+        age: age ? parseInt(age) : null,
+        role: isStaff ? 'STAFF' : 'PARTICIPANT'
+      }
     });
     res.json(user);
   } catch (e) { res.status(400).json({ error: "Erro no cadastro." }); }
@@ -216,6 +227,33 @@ app.get('/make-admin', async (req, res) => {
   if (!email) return res.send("?email=...");
   await prisma.person.update({ where: { email: String(email) }, data: { role: 'STAFF' } });
   res.send("OK");
+});
+
+app.get('/export', async (req, res) => {
+  try {
+    // Busca todas as pessoas cadastradas
+    const people = await prisma.person.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Cabeçalho do CSV
+    let csv = "Nome,Idade,Tipo,Genero,Igreja,WhatsApp,Data Cadastro\n";
+
+    // Preenche as linhas
+    people.forEach(p => {
+      // Limpa vírgulas dos nomes para não quebrar o CSV
+      const cleanName = p.name.replace(/,/g, '');
+      const data = new Date(p.createdAt).toLocaleDateString('pt-BR');
+
+      csv += `${cleanName},${p.age || ''},${p.type},${p.gender || ''},${p.church || ''},${p.phone || ''},${data}\n`;
+    });
+
+    // Força o navegador a baixar o arquivo
+    res.header('Content-Type', 'text/csv');
+    res.attachment('relatorio_ekklesia.csv');
+    res.send(csv);
+
+  } catch (error) { res.status(500).send("Erro ao gerar relatório"); }
 });
 
 // --- INICIALIZAÇÃO CORRIGIDA ---
