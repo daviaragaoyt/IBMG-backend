@@ -74,7 +74,8 @@ app.post('/track', async (req: Request, res: Response) => {
   try {
     const existing = await prisma.movement.findFirst({
       where: {
-        personId, checkpointId,
+        personId,
+        checkpointId,
         timestamp: { gte: todayStart, lte: todayEnd }
       },
       include: { person: true, checkpoint: true }
@@ -93,7 +94,7 @@ app.post('/track', async (req: Request, res: Response) => {
   } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- 4. DASHBOARD (CORRIGIDO) ---
+// --- 4. DASHBOARD ---
 app.get('/dashboard', async (req, res) => {
   try {
     const todayStart = startOfDay(new Date());
@@ -138,8 +139,7 @@ app.get('/dashboard', async (req, res) => {
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
 
-    // 5. Origem/Marketing (NOVO - LÓGICA QUE FALTAVA)
-    // Busca pessoas cadastradas hoje agrupadas por origem
+    // 5. Origem/Marketing
     const peopleToday = await prisma.person.groupBy({
       by: ['marketingSource'],
       where: { createdAt: { gte: todayStart, lte: todayEnd } },
@@ -157,7 +157,7 @@ app.get('/dashboard', async (req, res) => {
       byGender,
       byAge,
       byChurch,
-      bySource // Agora a variável existe!
+      bySource
     });
 
   } catch (error) {
@@ -228,14 +228,33 @@ app.get('/checkpoints', async (req, res) => {
   res.json(spots);
 });
 
+// --- BUSCA DE PESSOAS (ATUALIZADA: Com indicador se já entrou) ---
 app.get('/people', async (req, res) => {
   const { search } = req.query;
   if (!search) return res.json([]);
+
+  const todayStart = startOfDay(new Date());
+  const todayEnd = endOfDay(new Date());
+
   const people = await prisma.person.findMany({
     where: { name: { contains: String(search), mode: 'insensitive' } },
-    take: 10
+    take: 10,
+    include: {
+      // Verifica se tem movimentos HOJE
+      movements: {
+        where: { timestamp: { gte: todayStart, lte: todayEnd } },
+        select: { id: true }
+      }
+    }
   });
-  res.json(people);
+
+  // Adiciona o campo 'hasEntered' para o front
+  const result = people.map(p => ({
+    ...p,
+    hasEntered: p.movements.length > 0
+  }));
+
+  res.json(result);
 });
 
 app.get('/person/by-email', async (req, res) => {
@@ -251,27 +270,21 @@ app.get('/make-admin', async (req, res) => {
   res.send("OK");
 });
 
-// --- EXPORTAR (ATUALIZADO COM ORIGEM) ---
+// --- EXPORTAR (COM ORIGEM) ---
 app.get('/export', async (req, res) => {
   try {
-    // Busca todas as pessoas cadastradas
     const people = await prisma.person.findMany({
       orderBy: { createdAt: 'desc' }
     });
 
-    // Cabeçalho do CSV (Adicionei Origem)
     let csv = "Nome,Idade,Tipo,Genero,Igreja,WhatsApp,Origem,Data Cadastro\n";
 
-    // Preenche as linhas
     people.forEach(p => {
-      // Limpa vírgulas dos nomes para não quebrar o CSV
       const cleanName = p.name.replace(/,/g, '');
       const data = new Date(p.createdAt).toLocaleDateString('pt-BR');
-
       csv += `${cleanName},${p.age || ''},${p.type},${p.gender || ''},${p.church || ''},${p.phone || ''},${p.marketingSource || ''},${data}\n`;
     });
 
-    // Força o navegador a baixar o arquivo
     res.header('Content-Type', 'text/csv');
     res.attachment('relatorio_ekklesia.csv');
     res.send(csv);
@@ -279,6 +292,7 @@ app.get('/export', async (req, res) => {
   } catch (error) { res.status(500).send("Erro ao gerar relatório"); }
 });
 
+// --- SANEAMENTO DE DADOS ---
 app.get('/people/incomplete', async (req, res) => {
   try {
     const people = await prisma.person.findMany({
@@ -297,7 +311,6 @@ app.get('/people/incomplete', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Erro ao buscar pendências" }); }
 });
 
-// 2. Atualiza os dados da pessoa (Usado na Aba Pendências e no Scanner)
 app.put('/person/:id', async (req, res) => {
   const { id } = req.params;
   const { gender, phone, marketingSource, age, church } = req.body;
