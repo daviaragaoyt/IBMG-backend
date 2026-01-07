@@ -183,29 +183,39 @@ app.get('/dashboard', async (req, res) => {
     allEntries.forEach(e => { if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity); });
     const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
 
-    // --- 5. MARKETING (AGRUPAMENTO INTELIGENTE) ---
+    // --- 5. MARKETING (AGRUPAMENTO CORRIGIDO) ---
     const marketingMap = new Map();
+
     allEntries.forEach(e => {
       if (e.marketing) {
-        let category = e.marketing;
+        let category = e.marketing; // O valor original (Ex: "Instagram")
 
-        // Lista de Redes Sociais
-        const socialMedia = ['Instagram', 'WhatsApp', 'Youtube / Tiktok', 'Google / Site'];
-        // Lista de Igreja/Liderança
+        // 1. Grupo REDES SOCIAIS (Adicionei "Outros" aqui conforme pedido)
+        const socialMedia = [
+          'Instagram',
+          'WhatsApp',
+          'Youtube / Tiktok',
+          'Google / Site',
+          'Outros'
+        ];
+
+        // 2. Grupo IGREJA (Pastor/Líder vira Igreja/Culto)
         const churchGroup = ['Pastor / Líder'];
 
         if (socialMedia.includes(category)) {
-          category = 'Redes Sociais'; // Agrupa tudo aqui
+          category = 'Redes Sociais';
         } else if (churchGroup.includes(category)) {
-          category = 'Igreja / Culto'; // Agrupa liderança
+          category = 'Igreja / Culto';
         }
-        // 'Amigo/Convite', 'Faixa / Rua' e 'Outros' continuam separados
+        // "Amigo/Convite" e "Faixa / Rua" continuam separados
 
-        // OBS: Usa e.quantity para o Contador contar corretamente se for > 1 (raro no marketing, mas seguro)
+        // Soma
         marketingMap.set(category, (marketingMap.get(category) || 0) + (e.quantity || 1));
       }
     });
-    const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+
+    const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value); // Ordena do maior para o menor
 
     res.json({ total, timeline, checkpointsData, byType, byGender, byAge, byChurch, bySource });
 
