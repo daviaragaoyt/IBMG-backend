@@ -93,14 +93,14 @@ app.post('/track', async (req: Request, res: Response) => {
     return res.json({ success: true, status: 'SUCCESS', person: newMove.person, message: `✅ Acesso Liberado!` });
   } catch (error) { res.status(500).json({ success: false }); }
 });
+
 app.get('/dashboard', async (req, res) => {
   try {
-    // ⚠️ MODO TESTE: Pegando desde o inicio do ano para você ver os dados de HOJE.
-    // Quando for o evento real, mude para '2026-02-13T00:00:00'
+    // ⚠️ MODO TESTE (Datas Abertas). Mude para Fev/2026 no evento.
     const eventStart = new Date('2026-01-01T00:00:00');
     const eventEnd = new Date('2026-02-17T23:59:59');
 
-    // 1. Buscando TUDO
+    // 1. Buscas no Banco
     const [manualEntries, scannerEntries] = await Promise.all([
       prisma.manualEntry.findMany({
         where: { timestamp: { gte: eventStart, lte: eventEnd } },
@@ -115,20 +115,19 @@ app.get('/dashboard', async (req, res) => {
         }
       })
     ]);
-
-    // 2. Unificando os dados
     const allEntries = [
       ...manualEntries.map(e => ({
-        timestamp: e.timestamp, quantity: e.quantity, type: e.type, gender: e.gender,
-        ageGroup: e.ageGroup, church: e.church, marketing: null, source: 'MANUAL',
+        timestamp: e.timestamp,
+        quantity: e.quantity,
+        type: e.type,
+        gender: e.gender,
+        ageGroup: e.ageGroup,
+        church: e.church,
+        marketing: e.marketingSource,
+
+        source: 'MANUAL',
         checkpointName: e.checkpoint?.name || 'Indefinido'
       })),
-      ...scannerEntries.map(e => ({
-        timestamp: e.timestamp, quantity: 1, type: e.person.type, gender: e.person.gender,
-        ageGroup: e.person.age ? (e.person.age < 12 ? 'CRIANCA' : e.person.age < 18 ? 'JOVEM' : 'ADULTO') : 'ADULTO',
-        church: e.person.church, marketing: e.person.marketingSource, source: 'SCANNER',
-        checkpointName: e.checkpoint?.name || 'Indefinido'
-      }))
     ];
 
     // 3. Totais Globais
@@ -147,7 +146,7 @@ app.get('/dashboard', async (req, res) => {
       ADULTO: allEntries.filter(e => e.ageGroup === 'ADULTO').reduce((acc, e) => acc + e.quantity, 0),
     };
 
-    // 4. CRUZAMENTO DE DADOS
+    // 4. Linha do Tempo e Cruzamento por Local
     const timeline: Record<string, Record<string, number>> = {};
     const checkpointsData: Record<string, Record<string, any>> = {};
 
@@ -162,17 +161,11 @@ app.get('/dashboard', async (req, res) => {
       if (!timeline[day][hour]) timeline[day][hour] = 0;
       timeline[day][hour] += e.quantity;
 
-      // Checkpoint Detalhado
+      // Checkpoints Cruzados
       if (!checkpointsData[day]) checkpointsData[day] = {};
       if (!checkpointsData[day][local]) {
-        checkpointsData[day][local] = {
-          total: 0,
-          gender: { M: 0, F: 0 },
-          age: { CRIANCA: 0, JOVEM: 0, ADULTO: 0 },
-          type: { MEMBER: 0, VISITOR: 0 }
-        };
+        checkpointsData[day][local] = { total: 0, gender: { M: 0, F: 0 }, age: { CRIANCA: 0, JOVEM: 0, ADULTO: 0 }, type: { MEMBER: 0, VISITOR: 0 } };
       }
-
       const stats = checkpointsData[day][local];
       stats.total += e.quantity;
       if (e.gender === 'M') stats.gender.M += e.quantity; else if (e.gender === 'F') stats.gender.F += e.quantity;
@@ -184,8 +177,28 @@ app.get('/dashboard', async (req, res) => {
     allEntries.forEach(e => { if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity); });
     const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
 
+    // --- 5. MARKETING (AGRUPAMENTO INTELIGENTE) ---
     const marketingMap = new Map();
-    allEntries.forEach(e => { if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1); });
+    allEntries.forEach(e => {
+      if (e.marketing) {
+        let category = e.marketing;
+
+        // Lista de Redes Sociais
+        const socialMedia = ['Instagram', 'WhatsApp', 'Youtube / Tiktok', 'Google / Site'];
+        // Lista de Igreja/Liderança
+        const churchGroup = ['Pastor / Líder'];
+
+        if (socialMedia.includes(category)) {
+          category = 'Redes Sociais'; // Agrupa tudo aqui
+        } else if (churchGroup.includes(category)) {
+          category = 'Igreja / Culto'; // Agrupa liderança
+        }
+        // 'Amigo/Convite', 'Faixa / Rua' e 'Outros' continuam separados
+
+        // OBS: Usa e.quantity para o Contador contar corretamente se for > 1 (raro no marketing, mas seguro)
+        marketingMap.set(category, (marketingMap.get(category) || 0) + (e.quantity || 1));
+      }
+    });
     const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
     res.json({ total, timeline, checkpointsData, byType, byGender, byAge, byChurch, bySource });

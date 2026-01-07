@@ -43,14 +43,12 @@ model Movement {
 model ManualEntry {
   id           String   @id @default(uuid())
   timestamp    DateTime @default(now())
-  
-  type         String   // MEMBER, VISITOR
-  church       String?  
-  ageGroup     String?  // CRIANCA, JOVEM, ADULTO
-  gender       String?  // M, F (Novo campo)
-  
-  quantity     Int      @default(1)
-
   checkpointId String
   checkpoint   Checkpoint @relation(fields: [checkpointId], references: [id])
+  quantity     Int      @default(1)
+  type         String   // MEMBER, VISITOR
+  church       String?
+  gender       String?
+  ageGroup     String?
+ marketingSource String?
 }
