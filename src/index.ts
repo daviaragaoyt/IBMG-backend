@@ -35,9 +35,9 @@ app.post('/auth/login', async (req: Request, res: Response) => {
   }
 });
 
-// --- 2. CONTADOR MANUAL ---
 app.post('/count', async (req: Request, res: Response) => {
-  const { checkpointId, type, church, quantity, ageGroup, gender } = req.body;
+  // 1. Adicionei 'marketingSource' aqui
+  const { checkpointId, type, church, quantity, ageGroup, gender, marketingSource } = req.body;
 
   if (!checkpointId || !type) return res.status(400).json({ error: "Dados faltando" });
 
@@ -50,6 +50,10 @@ app.post('/count', async (req: Request, res: Response) => {
         ageGroup: ageGroup || 'ADULTO',
         gender: gender || 'M',
         quantity: quantity || 1,
+
+        // 2. Adicionei esta linha para salvar no banco
+        marketingSource: marketingSource || null,
+
         timestamp: new Date()
       }
     });
@@ -62,10 +66,12 @@ app.post('/count', async (req: Request, res: Response) => {
     });
 
     res.json({ success: true, totalToday, entry });
-  } catch (error) { res.status(500).json({ error: "Erro ao contar" }); }
+  } catch (error) {
+    console.error(error); // Bom para ver erro no terminal se houver
+    res.status(500).json({ error: "Erro ao contar" });
+  }
 });
 
-// --- 3. TRACKING QR CODE ---
 app.post('/track', async (req: Request, res: Response) => {
   const { personId, checkpointId } = req.body;
   const todayStart = startOfDay(new Date());
