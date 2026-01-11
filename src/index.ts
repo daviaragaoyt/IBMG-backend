@@ -1,83 +1,154 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
 import { PrismaClient } from '@prisma/client';
 import { startOfDay, endOfDay } from 'date-fns';
+import { z } from 'zod'; // Biblioteca de validação
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
+// --- MIDDLEWARES (Segurança e Logs) ---
 app.use(cors({ origin: '*' }));
+app.use(helmet()); // Proteção de headers HTTP
 app.use(express.json());
+app.use(morgan('dev')); // Log detalhado no terminal (GET /dashboard 200 15ms)
 
-// --- CONFIGURAÇÕES ---
+// --- CONFIGURAÇÕES E CONSTANTES ---
 const CHURCHES = [
   "Ibmg Alphaville", "Ibmg Orlando", "Ibmg Sede", "Ibmg Santa Maria", "Ibmg Caldas", "Outra"
 ];
 
-app.get('/', (req, res) => { res.send("Ekklesia API Online (Neon DB) 🚀"); });
+// Locais que permitem bipar a mesma pessoa várias vezes no dia (Atendimentos)
+const SERVICE_CATEGORIES = ['PROPHETIC', 'PRAYER', 'EVANGELISM', 'CONSOLIDATION', 'STORE'];
+
+// --- SCHEMAS DE VALIDAÇÃO (ZOD) ---
+const CountSchema = z.object({
+  checkpointId: z.string().min(1),
+  type: z.enum(['MEMBER', 'VISITOR']),
+  church: z.string().optional(),
+  quantity: z.number().min(1).default(1),
+  ageGroup: z.string().optional(),
+  gender: z.string().optional(),
+  marketingSource: z.string().nullable().optional()
+});
+
+const RegisterSchema = z.object({
+  name: z.string().min(3),
+  email: z.string().email().optional().or(z.literal('')),
+  phone: z.string().optional(),
+  type: z.string(),
+  church: z.string().optional(),
+  gender: z.string().optional(),
+  marketingSource: z.string().optional(),
+  age: z.union([z.string(), z.number()]).optional(),
+  isStaff: z.boolean().optional()
+});
+
+// --- ROTAS PÚBLICAS ---
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    message: 'Ekklesia Event API Running 🚀',
+    timestamp: new Date()
+  });
+});
+
 app.get('/config/churches', (req, res) => res.json(CHURCHES));
 
-// --- 1. AUTENTICAÇÃO STAFF ---
+// --- 1. AUTENTICAÇÃO ---
 app.post('/auth/login', async (req: Request, res: Response) => {
   const { email } = req.body;
   try {
+    if (!email) return res.status(400).json({ error: "E-mail obrigatório" });
+
     const user = await prisma.person.findUnique({ where: { email: String(email) } });
-    if (!user) return res.status(404).json({ error: "E-mail não encontrado." });
-    if (user.role !== 'STAFF') return res.status(403).json({ error: "Acesso negado. Apenas Staff." });
+
+    if (!user) return res.status(404).json({ error: "E-mail não encontrado na base." });
+    if (user.role !== 'STAFF') return res.status(403).json({ error: "Acesso restrito à equipe." });
+
+    // Log de acesso
+    console.log(`[LOGIN] Staff ${user.name} logou às ${new Date().toLocaleTimeString()}`);
+
     res.json(user);
   } catch (error: any) {
-    console.error("❌ ERRO NO LOGIN:", error);
-    res.status(500).json({
-      error: "Erro interno.",
-      details: error.message || String(error)
-    });
+    console.error("Erro Login:", error);
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 });
 
+// --- 2. CONTADOR MANUAL (Melhorado) ---
 app.post('/count', async (req: Request, res: Response) => {
-  // 1. Adicionei 'marketingSource' aqui
-  const { checkpointId, type, church, quantity, ageGroup, gender, marketingSource } = req.body;
-
-  if (!checkpointId || !type) return res.status(400).json({ error: "Dados faltando" });
-
   try {
+    // Validação dos dados recebidos
+    const data = CountSchema.parse(req.body);
+
+    // DEBOUNCE: Evita cliques duplos acidentais (se for idêntico e < 2s)
+    const lastEntry = await prisma.manualEntry.findFirst({
+      where: { checkpointId: data.checkpointId, type: data.type },
+      orderBy: { timestamp: 'desc' }
+    });
+
+    if (lastEntry) {
+      const diff = new Date().getTime() - new Date(lastEntry.timestamp).getTime();
+      // Se foi há menos de 2 segundos E os dados são iguais, ignora
+      if (diff < 2000 && lastEntry.gender === data.gender && lastEntry.ageGroup === data.ageGroup && lastEntry.church === data.church) {
+        return res.json({ success: true, message: "Duplicidade evitada (clique rápido)", ignored: true });
+      }
+    }
+
     const entry = await prisma.manualEntry.create({
       data: {
-        checkpointId,
-        type,
-        church,
-        ageGroup: ageGroup || 'ADULTO',
-        gender: gender || 'M',
-        quantity: quantity || 1,
-
-        // 2. Adicionei esta linha para salvar no banco
-        marketingSource: marketingSource || null,
-
+        checkpointId: data.checkpointId,
+        type: data.type,
+        church: data.church || 'Ibmg Sede',
+        ageGroup: data.ageGroup || 'ADULTO',
+        gender: data.gender || 'M',
+        quantity: data.quantity,
+        marketingSource: data.marketingSource || null,
         timestamp: new Date()
       }
     });
 
-    // Total de HOJE
+    // Retorna o total do dia para aquele checkpoint (Feedback instantâneo)
     const todayStart = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
-    const totalToday = await prisma.manualEntry.count({
-      where: { checkpointId, timestamp: { gte: todayStart, lte: todayEnd } }
+
+    const totalToday = await prisma.manualEntry.aggregate({
+      where: {
+        checkpointId: data.checkpointId,
+        timestamp: { gte: todayStart, lte: todayEnd }
+      },
+      _sum: { quantity: true }
     });
 
-    res.json({ success: true, totalToday, entry });
+    res.json({ success: true, totalToday: totalToday._sum.quantity || 0, entry });
   } catch (error) {
-    console.error(error); // Bom para ver erro no terminal se houver
-    res.status(500).json({ error: "Erro ao contar" });
+    console.error(error);
+    res.status(400).json({ error: "Dados inválidos ou erro ao salvar." });
   }
 });
 
+// --- 3. TRACKING QR CODE (Lógica Inteligente de Reentrada) ---
 app.post('/track', async (req: Request, res: Response) => {
   const { personId, checkpointId } = req.body;
   const todayStart = startOfDay(new Date());
   const todayEnd = endOfDay(new Date());
 
+  if (!personId || !checkpointId) return res.status(400).json({ error: "IDs obrigatórios" });
+
   try {
+    // 1. Busca informações do Local (Checkpoint) para saber se é Serviço ou Entrada
+    const checkpoint = await prisma.checkpoint.findUnique({ where: { id: checkpointId } });
+    if (!checkpoint) return res.status(404).json({ error: "Local não encontrado" });
+
+    // Se o local for de categoria "SERVIÇO" (Oração, Profético), permite contar várias vezes
+    // Se for "GERAL" (Entrada) ou "KIDS", bloqueia repetição
+    const allowReentry = SERVICE_CATEGORIES.includes(checkpoint.category || '');
+
+    // 2. Verifica registro existente HOJE
     const existing = await prisma.movement.findFirst({
       where: {
         personId,
@@ -87,26 +158,51 @@ app.post('/track', async (req: Request, res: Response) => {
       include: { person: true, checkpoint: true }
     });
 
+    // 3. Rate Limit Preventivo: Se a pessoa foi bipada no MESMO local há menos de 1 minuto, ignora
     if (existing) {
-      return res.json({ success: true, status: 'REENTRY', person: existing.person, message: `⚠️ Já registrado hoje.` });
+      const secondsDiff = (new Date().getTime() - new Date(existing.timestamp).getTime()) / 1000;
+      if (secondsDiff < 60) {
+        return res.json({ success: true, status: 'IGNORED', person: existing.person, message: `⏳ Aguarde para bipar novamente.` });
+      }
     }
 
+    // 4. Lógica de Bloqueio (Se não for serviço e já existir, barra a contagem)
+    if (existing && !allowReentry) {
+      return res.json({
+        success: true,
+        status: 'REENTRY',
+        person: existing.person,
+        message: `⚠️ ${existing.person.name.split(' ')[0]} já entrou hoje.`
+      });
+    }
+
+    // 5. Cria o movimento (Conta +1)
     const newMove = await prisma.movement.create({
       data: { personId, checkpointId },
       include: { person: true, checkpoint: true }
     });
 
-    return res.json({ success: true, status: 'SUCCESS', person: newMove.person, message: `✅ Acesso Liberado!` });
-  } catch (error) { res.status(500).json({ success: false }); }
+    return res.json({
+      success: true,
+      status: 'SUCCESS',
+      person: newMove.person,
+      message: allowReentry ? `✅ Atendimento registrado!` : `✅ Acesso Liberado!`
+    });
+
+  } catch (error) {
+    console.error("Erro /track:", error);
+    res.status(500).json({ success: false, error: "Erro interno" });
+  }
 });
 
+// --- 4. DASHBOARD (Agregador de Dados Completo) ---
 app.get('/dashboard', async (req, res) => {
   try {
-    // DATA: Usando 01/01/2026 para testes. No evento, mude para 2026-02-13
-    const eventStart = new Date('2026-01-01T00:00:00');
-    const eventEnd = new Date('2026-02-17T23:59:59');
+    // Datas do evento (ajuste conforme a realidade)
+    const eventStart = new Date('2025-01-01T00:00:00');
+    const eventEnd = new Date('2026-12-31T23:59:59');
 
-    // 1. Buscando TUDO
+    // Executa as queries em paralelo para performance
     const [manualEntries, scannerEntries] = await Promise.all([
       prisma.manualEntry.findMany({
         where: { timestamp: { gte: eventStart, lte: eventEnd } },
@@ -116,13 +212,14 @@ app.get('/dashboard', async (req, res) => {
         where: { timestamp: { gte: eventStart, lte: eventEnd } },
         select: {
           timestamp: true,
+          // Movimentos QR code contam como 1
           checkpoint: { select: { name: true } },
           person: { select: { type: true, gender: true, age: true, church: true, marketingSource: true } }
         }
       })
     ]);
 
-    // 2. Unificando os dados (CORREÇÃO DO ERRO AQUI)
+    // Unifica e Normaliza
     const allEntries = [
       ...manualEntries.map(e => ({
         timestamp: e.timestamp,
@@ -130,9 +227,8 @@ app.get('/dashboard', async (req, res) => {
         type: e.type,
         gender: e.gender,
         ageGroup: e.ageGroup,
-        church: e.church, // <--- ADICIONADO: Agora existe nos dois tipos!
-        marketing: null,
-        source: 'MANUAL',
+        church: e.church,
+        marketing: e.marketingSource,
         checkpointName: e.checkpoint?.name || 'Indefinido'
       })),
       ...scannerEntries.map(e => ({
@@ -143,61 +239,44 @@ app.get('/dashboard', async (req, res) => {
         ageGroup: e.person.age ? (e.person.age < 12 ? 'CRIANCA' : e.person.age < 18 ? 'JOVEM' : 'ADULTO') : 'ADULTO',
         church: e.person.church,
         marketing: e.person.marketingSource,
-        source: 'SCANNER',
         checkpointName: e.checkpoint?.name || 'Indefinido'
       }))
     ];
 
-    // 3. Totais Globais
-    const total = allEntries.reduce((acc, curr) => acc + curr.quantity, 0);
-
-    const byType = {
-      MEMBER: allEntries.filter(e => e.type === 'MEMBER').reduce((acc, e) => acc + e.quantity, 0),
-      VISITOR: allEntries.filter(e => e.type === 'VISITOR').reduce((acc, e) => acc + e.quantity, 0)
-    };
-
-    const byGender = {
-      M: allEntries.filter(e => e.gender === 'M').reduce((acc, e) => acc + e.quantity, 0),
-      F: allEntries.filter(e => e.gender === 'F').reduce((acc, e) => acc + e.quantity, 0)
-    };
-
-    const byAge = {
-      CRIANCA: allEntries.filter(e => e.ageGroup === 'CRIANCA').reduce((acc, e) => acc + e.quantity, 0),
-      JOVEM: allEntries.filter(e => e.ageGroup === 'JOVEM').reduce((acc, e) => acc + e.quantity, 0),
-      ADULTO: allEntries.filter(e => e.ageGroup === 'ADULTO').reduce((acc, e) => acc + e.quantity, 0),
-    };
-
-    // 4. CRUZAMENTO DE DADOS (LINHA DO TEMPO + CHECKPOINTS)
+    // Estruturas de Retorno
     const timeline: Record<string, Record<string, number>> = {};
     const checkpointsData: Record<string, Record<string, any>> = {};
 
+    // Processamento em memória
     allEntries.forEach(e => {
       const date = new Date(e.timestamp);
       const day = date.getDate().toString();
       const hour = date.getHours().toString();
       const local = e.checkpointName;
 
-      // Timeline Logic
+      // 1. Timeline (Por Dia > Hora)
       if (!timeline[day]) timeline[day] = {};
       if (!timeline[day][hour]) timeline[day][hour] = 0;
       timeline[day][hour] += e.quantity;
 
-      // Checkpoint Logic (CRUZAMENTO COMPLETO)
+      // 2. Checkpoints Data (Por Dia > Local > Detalhes)
       if (!checkpointsData[day]) checkpointsData[day] = {};
       if (!checkpointsData[day][local]) {
         checkpointsData[day][local] = {
           total: 0,
           gender: { M: 0, F: 0 },
           age: { CRIANCA: 0, JOVEM: 0, ADULTO: 0 },
-          type: { MEMBER: 0, VISITOR: 0 }
+          type: { MEMBER: 0, VISITOR: 0 },
+          marketing: {},
+          church: {}
         };
       }
 
       const stats = checkpointsData[day][local];
       stats.total += e.quantity;
 
-      if (e.gender === 'M') stats.gender.M += e.quantity;
-      else if (e.gender === 'F') stats.gender.F += e.quantity;
+      // Demografia
+      if (e.gender === 'M') stats.gender.M += e.quantity; else if (e.gender === 'F') stats.gender.F += e.quantity;
 
       if (e.ageGroup === 'CRIANCA') stats.age.CRIANCA += e.quantity;
       else if (e.ageGroup === 'JOVEM') stats.age.JOVEM += e.quantity;
@@ -205,157 +284,63 @@ app.get('/dashboard', async (req, res) => {
 
       if (e.type === 'MEMBER') stats.type.MEMBER += e.quantity;
       else stats.type.VISITOR += e.quantity;
-    });
 
-    // Top Igrejas
-    const churchMap = new Map();
-    allEntries.forEach(e => {
-      if (e.church) churchMap.set(e.church, (churchMap.get(e.church) || 0) + e.quantity);
-    });
-    const byChurch = Array.from(churchMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
+      // Marketing (Contagem de ocorrências)
+      if (e.marketing) {
+        stats.marketing[e.marketing] = (stats.marketing[e.marketing] || 0) + e.quantity;
+      }
 
-    // Marketing
-    const marketingMap = new Map();
-    allEntries.forEach(e => {
-      if (e.marketing) marketingMap.set(e.marketing, (marketingMap.get(e.marketing) || 0) + 1);
-    });
-    const bySource = Array.from(marketingMap, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-
-    res.json({ total, timeline, checkpointsData, byType, byGender, byAge, byChurch, bySource });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Erro no dashboard" });
-  }
-});
-
-// --- 5. SETUP (Locais + Admin) ---
-app.get('/setup', async (req, res) => {
-  try {
-    await prisma.checkpoint.createMany({
-      data: [
-        { name: "Recepção / Entrada", category: "GENERAL" },
-        { name: "Sala Profética", category: "PROPHETIC" },
-        { name: "Consolidação", category: "CONSOLIDATION" },
-        { name: "Kombi Evangelista", category: "EVANGELISM" },
-        { name: "Tenda de Oração", category: "PRAYER" },
-      ],
-      skipDuplicates: true
-    });
-
-    const adminEmail = "davi@ibmg.com";
-
-    const admin = await prisma.person.upsert({
-      where: { email: adminEmail },
-      update: { role: 'STAFF' },
-      create: {
-        name: "Davi Admin",
-        email: adminEmail,
-        type: "MEMBER",
-        role: "STAFF",
-        church: "Ibmg Sede",
-        age: 25
+      // Igreja (Contagem de ocorrências)
+      if (e.church) {
+        stats.church[e.church] = (stats.church[e.church] || 0) + e.quantity;
       }
     });
 
-    res.send(`✅ Setup Concluído!<br>Locais criados.<br>Admin criado: <b>${admin.email}</b>`);
+    res.json({ timeline, checkpointsData });
+
   } catch (error) {
-    res.status(500).send("Erro no setup: " + error);
+    console.error("Erro fatal dashboard:", error);
+    res.status(500).json({ error: "Erro ao processar dados do dashboard" });
   }
 });
 
-// --- CADASTRO COMPLETO ---
-app.post('/register', async (req, res) => {
-  const { name, email, phone, type, church, age, gender, isStaff, marketingSource } = req.body;
+// --- ROTAS AUXILIARES ---
 
-  try {
-    const user = await prisma.person.create({
-      data: {
-        name,
-        email: email || null,
-        phone: phone || null,
-        type,
-        church,
-        gender,
-        marketingSource,
-        age: age ? parseInt(age) : null,
-        role: isStaff ? 'STAFF' : 'PARTICIPANT'
-      }
-    });
-    res.json(user);
-  } catch (e) { res.status(400).json({ error: "Erro no cadastro." }); }
-});
-
+// Lista locais
 app.get('/checkpoints', async (req, res) => {
-  const spots = await prisma.checkpoint.findMany();
+  const spots = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
   res.json(spots);
 });
 
-// --- BUSCA DE PESSOAS (ATUALIZADA: Com indicador se já entrou) ---
+// Busca pessoas para o Scanner (Inclui flag se já entrou hoje)
 app.get('/people', async (req, res) => {
   const { search } = req.query;
-  if (!search) return res.json([]);
+  if (!search || String(search).length < 3) return res.json([]);
 
   const todayStart = startOfDay(new Date());
   const todayEnd = endOfDay(new Date());
 
   const people = await prisma.person.findMany({
     where: { name: { contains: String(search), mode: 'insensitive' } },
-    take: 10,
+    take: 15, // Aumentei para 15
     include: {
-      // Verifica se tem movimentos HOJE
       movements: {
         where: { timestamp: { gte: todayStart, lte: todayEnd } },
-        select: { id: true }
+        select: { id: true, checkpoint: { select: { name: true } } }
       }
     }
   });
 
-  // Adiciona o campo 'hasEntered' para o front
   const result = people.map(p => ({
     ...p,
-    hasEntered: p.movements.length > 0
+    hasEntered: p.movements.length > 0, // Flag visual
+    lastLocation: p.movements.length > 0 ? p.movements[0].checkpoint.name : null
   }));
 
   res.json(result);
 });
 
-app.get('/person/by-email', async (req, res) => {
-  const { email } = req.query;
-  const person = await prisma.person.findUnique({ where: { email: String(email) } });
-  person ? res.json(person) : res.status(404).json({ error: "Não encontrado" });
-});
-
-app.get('/make-admin', async (req, res) => {
-  const { email } = req.query;
-  if (!email) return res.send("?email=...");
-  await prisma.person.update({ where: { email: String(email) }, data: { role: 'STAFF' } });
-  res.send("OK");
-});
-
-// --- EXPORTAR (COM ORIGEM) ---
-app.get('/export', async (req, res) => {
-  try {
-    const people = await prisma.person.findMany({
-      orderBy: { createdAt: 'desc' }
-    });
-
-    let csv = "Nome,Idade,Tipo,Genero,Igreja,WhatsApp,Origem,Data Cadastro\n";
-
-    people.forEach(p => {
-      const cleanName = p.name.replace(/,/g, '');
-      const data = new Date(p.createdAt).toLocaleDateString('pt-BR');
-      csv += `${cleanName},${p.age || ''},${p.type},${p.gender || ''},${p.church || ''},${p.phone || ''},${p.marketingSource || ''},${data}\n`;
-    });
-
-    res.header('Content-Type', 'text/csv');
-    res.attachment('relatorio_ekklesia.csv');
-    res.send(csv);
-
-  } catch (error) { res.status(500).send("Erro ao gerar relatório"); }
-});
-
-// --- SANEAMENTO DE DADOS ---
+// Busca pendências de cadastro (Saneamento)
 app.get('/people/incomplete', async (req, res) => {
   try {
     const people = await prisma.person.findMany({
@@ -374,26 +359,69 @@ app.get('/people/incomplete', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "Erro ao buscar pendências" }); }
 });
 
+// Atualiza pessoa (Smart Check-in)
 app.put('/person/:id', async (req, res) => {
   const { id } = req.params;
-  const { gender, phone, marketingSource, age, church } = req.body;
-
   try {
     const updated = await prisma.person.update({
       where: { id },
-      data: {
-        gender: gender || undefined,
-        phone: phone || undefined,
-        marketingSource: marketingSource || undefined,
-        age: age ? parseInt(age) : undefined,
-        church: church || undefined
-      }
+      data: req.body
     });
     res.json(updated);
-  } catch (error) { res.status(500).json({ error: "Erro ao atualizar." }); }
+  }
+  catch (e) { res.status(500).json({ error: "Erro update" }); }
 });
 
-// --- INICIALIZAÇÃO ---
+// Cadastro Rápido
+app.post('/register', async (req, res) => {
+  try {
+    const data = RegisterSchema.parse(req.body); // Valida dados com Zod
+    const user = await prisma.person.create({
+      data: {
+        ...data,
+        age: data.age ? Number(data.age) : null,
+        role: data.isStaff ? 'STAFF' : 'PARTICIPANT'
+      }
+    });
+    res.json(user);
+  }
+  catch (e) { res.status(400).json({ error: "Erro cadastro", details: e }); }
+});
+
+// Exportação CSV Completa
+app.get('/export', async (req, res) => {
+  try {
+    const people = await prisma.person.findMany({ orderBy: { createdAt: 'desc' } });
+    let csv = "Nome,Idade,Tipo,Genero,Igreja,WhatsApp,Origem,Data Cadastro\n";
+    people.forEach(p => {
+      const cleanName = p.name ? p.name.replace(/,/g, '') : 'Sem Nome';
+      const data = new Date(p.createdAt).toLocaleDateString('pt-BR');
+      csv += `${cleanName},${p.age || ''},${p.type},${p.gender || ''},${p.church || ''},${p.phone || ''},${p.marketingSource || ''},${data}\n`;
+    });
+    res.header('Content-Type', 'text/csv');
+    res.attachment('relatorio_geral.csv');
+    res.send(csv);
+  } catch (error) { res.status(500).send("Erro ao gerar relatório"); }
+});
+
+// Rota de Setup (Criação de Tabelas/Locais)
+app.get('/setup', async (req, res) => {
+  try {
+    await prisma.checkpoint.createMany({
+      data: [
+        { name: "Recepção / Entrada", category: "GENERAL" },
+        { name: "Salinha Kids", category: "KIDS" },
+        { name: "Tenda de Oração", category: "PRAYER" },
+        { name: "Sala Profética", category: "PROPHETIC" },
+        { name: "Livraria", category: "STORE" }
+      ],
+      skipDuplicates: true
+    });
+    res.send("Setup OK: Locais criados.");
+  } catch (e) { res.status(500).send("Erro setup: " + e); }
+});
+
+// Inicialização
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🔥 Servidor local rodando na porta ${PORT}`);

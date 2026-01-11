@@ -1,3 +1,5 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,48 +9,96 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// --- PESSOAS (Staff, Membros e Visitantes) ---
 model Person {
-  id        String   @id @default(uuid())
-  name      String
-  email     String?  @unique
-  phone     String?
-  type      String   @default("VISITOR") // MEMBER, VISITOR
-  role      String   @default("PARTICIPANT") // STAFF, PARTICIPANT
-  church    String?
-  gender String?
-  age       Int?     
-  marketingSource String?
-  createdAt DateTime @default(now())
+  id              String   @id @default(uuid())
+  name            String
+  email           String?  @unique // Opcional para visitantes
+  phone           String?
+  age             Int?
+  gender          String?  // 'M' ou 'F'
+  
+  // Categorias
+  type            PersonType @default(VISITOR) // MEMBER ou VISITOR
+  role            Role       @default(PARTICIPANT) // STAFF ou PARTICIPANT
+  church          String?    // Qual igreja pertence
+  marketingSource String?    // Como conheceu (Instagram, Faixa, etc)
 
-  movements Movement[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relacionamentos
+  movements       Movement[]
+
+  @@map("people")
 }
 
+// --- LOCAIS (Recepção, Kids, Tenda) ---
 model Checkpoint {
-  id            String   @id @default(uuid())
-  name          String   
-  category      String   @default("GENERAL") 
+  id          String   @id @default(uuid())
+  name        String   @unique
+  category    CheckpointCategory @default(GENERAL) // Para saber se bloqueia reentrada
+  capacity    Int?     // Capacidade máxima (Opcional)
+
+  // Relacionamentos
   movements     Movement[]
   manualEntries ManualEntry[]
+
+  @@map("checkpoints")
 }
 
+// --- MOVIMENTAÇÃO (QR Code / Scanner) ---
+// Registra CADA BIP do scanner
 model Movement {
   id           String   @id @default(uuid())
   timestamp    DateTime @default(now())
+  
   personId     String
   person       Person     @relation(fields: [personId], references: [id])
+  
   checkpointId String
   checkpoint   Checkpoint @relation(fields: [checkpointId], references: [id])
+
+  @@map("movements")
 }
 
+// --- CONTAGEM MANUAL (Botões +1) ---
+// Registra cliques no painel do Staff
 model ManualEntry {
-  id           String   @id @default(uuid())
-  timestamp    DateTime @default(now())
-  checkpointId String
-  checkpoint   Checkpoint @relation(fields: [checkpointId], references: [id])
-  quantity     Int      @default(1)
-  type         String   // MEMBER, VISITOR
-  church       String?
-  gender       String?
-  ageGroup     String?
- marketingSource String?
+  id              String   @id @default(uuid())
+  timestamp       DateTime @default(now())
+  quantity        Int      @default(1)
+
+  // Dados demográficos do clique
+  type            PersonType // MEMBER ou VISITOR
+  gender          String?    // 'M' ou 'F'
+  ageGroup        String?    // 'CRIANCA', 'JOVEM', 'ADULTO'
+  church          String?
+  marketingSource String?
+
+  checkpointId    String
+  checkpoint      Checkpoint @relation(fields: [checkpointId], references: [id])
+
+  @@map("manual_entries")
+}
+
+// --- ENUMS (Opções Fixas) ---
+enum PersonType {
+  MEMBER
+  VISITOR
+}
+
+enum Role {
+  STAFF
+  PARTICIPANT
+}
+
+enum CheckpointCategory {
+  GENERAL       // Entrada (Bloqueia reentrada)
+  KIDS          // Crianças (Bloqueia reentrada)
+  PROPHETIC     // Serviço (Permite reentrada)
+  PRAYER        // Serviço (Permite reentrada)
+  EVANGELISM    // Serviço
+  CONSOLIDATION // Serviço
+  STORE         // Loja
 }
