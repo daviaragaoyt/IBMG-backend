@@ -7,7 +7,7 @@ import {
   PrismaClient,
   PersonType,       // <--- Adicionar
   Role,             // <--- Adicionar
-  CheckpointCategory // <--- Adicionar (se for usar em outro lugar)
+  // <--- Adicionar (se for usar em outro lugar)
 } from '@prisma/client';
 import { startOfDay, endOfDay } from 'date-fns';
 import { z } from 'zod'; // Biblioteca de validação
@@ -201,14 +201,13 @@ app.post('/track', async (req: Request, res: Response) => {
   }
 });
 
-// --- 4. DASHBOARD (Agregador de Dados Completo) ---
+// --- 4. DASHBOARD (AGREGADOR BLINDADO) ---
 app.get('/dashboard', async (req, res) => {
   try {
-    // Datas do evento (ajuste conforme a realidade)
     const eventStart = new Date('2025-01-01T00:00:00');
     const eventEnd = new Date('2026-12-31T23:59:59');
 
-    // Executa as queries em paralelo para performance
+    // 1. Busca dados brutos
     const [manualEntries, scannerEntries] = await Promise.all([
       prisma.manualEntry.findMany({
         where: { timestamp: { gte: eventStart, lte: eventEnd } },
@@ -218,54 +217,65 @@ app.get('/dashboard', async (req, res) => {
         where: { timestamp: { gte: eventStart, lte: eventEnd } },
         select: {
           timestamp: true,
-          // Movimentos QR code contam como 1
           checkpoint: { select: { name: true } },
           person: { select: { type: true, gender: true, age: true, church: true, marketingSource: true } }
         }
       })
     ]);
 
-    // Unifica e Normaliza
+    // 2. Normalização (O SEGREDO ESTÁ AQUI)
     const allEntries = [
+      // Entradas Manuais
       ...manualEntries.map(e => ({
         timestamp: e.timestamp,
         quantity: e.quantity,
-        type: e.type,
-        gender: e.gender,
-        ageGroup: e.ageGroup,
-        church: e.church,
-        marketing: e.marketingSource,
+        // Garante que sempre vem string maiúscula ou padrão
+        type: (e.type || 'VISITOR').toUpperCase(),
+        gender: (e.gender || 'M').toUpperCase(), // Se null, assume M
+        ageGroup: (e.ageGroup || 'ADULTO').toUpperCase(),
+        church: e.church || 'Não Informado',
+        marketing: e.marketingSource || 'Outros',
         checkpointName: e.checkpoint?.name || 'Indefinido'
       })),
-      ...scannerEntries.map(e => ({
-        timestamp: e.timestamp,
-        quantity: 1,
-        type: e.person.type,
-        gender: e.person.gender,
-        ageGroup: e.person.age ? (e.person.age < 12 ? 'CRIANCA' : e.person.age < 18 ? 'JOVEM' : 'ADULTO') : 'ADULTO',
-        church: e.person.church,
-        marketing: e.person.marketingSource,
-        checkpointName: e.checkpoint?.name || 'Indefinido'
-      }))
+
+      // Entradas via Scanner (Converte Idade Numérica -> Faixa Etária)
+      ...scannerEntries.map(e => {
+        let derivedGroup = 'ADULTO';
+        if (e.person.age !== null) {
+          if (e.person.age <= 12) derivedGroup = 'CRIANCA';
+          else if (e.person.age <= 18) derivedGroup = 'JOVEM';
+        }
+
+        return {
+          timestamp: e.timestamp,
+          quantity: 1,
+          type: (e.person.type || 'VISITOR').toUpperCase(),
+          gender: (e.person.gender || 'M').toUpperCase(),
+          ageGroup: derivedGroup,
+          church: e.person.church || 'Não Informado',
+          marketing: e.person.marketingSource || 'Outros',
+          checkpointName: e.checkpoint?.name || 'Indefinido'
+        };
+      })
     ];
 
-    // Estruturas de Retorno
+    // 3. Estruturas de Agregação
     const timeline: Record<string, Record<string, number>> = {};
     const checkpointsData: Record<string, Record<string, any>> = {};
 
-    // Processamento em memória
+    // 4. Processamento
     allEntries.forEach(e => {
       const date = new Date(e.timestamp);
       const day = date.getDate().toString();
       const hour = date.getHours().toString();
       const local = e.checkpointName;
 
-      // 1. Timeline (Por Dia > Hora)
+      // > Timeline
       if (!timeline[day]) timeline[day] = {};
       if (!timeline[day][hour]) timeline[day][hour] = 0;
       timeline[day][hour] += e.quantity;
 
-      // 2. Checkpoints Data (Por Dia > Local > Detalhes)
+      // > Checkpoints (Dados do Dia)
       if (!checkpointsData[day]) checkpointsData[day] = {};
       if (!checkpointsData[day][local]) {
         checkpointsData[day][local] = {
@@ -281,32 +291,29 @@ app.get('/dashboard', async (req, res) => {
       const stats = checkpointsData[day][local];
       stats.total += e.quantity;
 
-      // Demografia
-      if (e.gender === 'M') stats.gender.M += e.quantity; else if (e.gender === 'F') stats.gender.F += e.quantity;
+      // Lógica de Soma Segura (Verifica todas as variações possíveis)
+      if (e.gender.startsWith('M')) stats.gender.M += e.quantity;
+      else stats.gender.F += e.quantity;
 
-      if (e.ageGroup === 'CRIANCA') stats.age.CRIANCA += e.quantity;
-      else if (e.ageGroup === 'JOVEM') stats.age.JOVEM += e.quantity;
+      if (e.ageGroup.includes('CRIANCA') || e.ageGroup.includes('KIDS')) stats.age.CRIANCA += e.quantity;
+      else if (e.ageGroup.includes('JOVEM') || e.ageGroup.includes('TEEN')) stats.age.JOVEM += e.quantity;
       else stats.age.ADULTO += e.quantity;
 
-      if (e.type === 'MEMBER') stats.type.MEMBER += e.quantity;
+      if (e.type.includes('MEMBER') || e.type.includes('MEMBRO')) stats.type.MEMBER += e.quantity;
       else stats.type.VISITOR += e.quantity;
 
-      // Marketing (Contagem de ocorrências)
-      if (e.marketing) {
-        stats.marketing[e.marketing] = (stats.marketing[e.marketing] || 0) + e.quantity;
-      }
+      // Marketing
+      if (e.marketing) stats.marketing[e.marketing] = (stats.marketing[e.marketing] || 0) + e.quantity;
 
-      // Igreja (Contagem de ocorrências)
-      if (e.church) {
-        stats.church[e.church] = (stats.church[e.church] || 0) + e.quantity;
-      }
+      // Igreja
+      if (e.church) stats.church[e.church] = (stats.church[e.church] || 0) + e.quantity;
     });
 
     res.json({ timeline, checkpointsData });
 
   } catch (error) {
-    console.error("Erro fatal dashboard:", error);
-    res.status(500).json({ error: "Erro ao processar dados do dashboard" });
+    console.error("Erro Dashboard:", error);
+    res.status(500).json({ error: "Erro ao processar dashboard" });
   }
 });
 
