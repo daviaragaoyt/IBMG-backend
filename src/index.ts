@@ -204,10 +204,11 @@ app.post('/track', async (req: Request, res: Response) => {
 // --- 4. DASHBOARD (AGREGADOR BLINDADO) ---
 app.get('/dashboard', async (req, res) => {
   try {
+    // Pega desde o início de 2025 até o fim de 2026 para garantir que pega TUDO
     const eventStart = new Date('2025-01-01T00:00:00');
     const eventEnd = new Date('2026-12-31T23:59:59');
 
-    // 1. Busca dados brutos
+    // 1. Busca dados brutos (Manual + Scanner)
     const [manualEntries, scannerEntries] = await Promise.all([
       prisma.manualEntry.findMany({
         where: { timestamp: { gte: eventStart, lte: eventEnd } },
@@ -223,29 +224,25 @@ app.get('/dashboard', async (req, res) => {
       })
     ]);
 
-    // 2. Normalização (O SEGREDO ESTÁ AQUI)
+    // 2. Normalização (Padroniza tudo para garantir a soma)
     const allEntries = [
-      // Entradas Manuais
       ...manualEntries.map(e => ({
         timestamp: e.timestamp,
         quantity: e.quantity,
-        // Garante que sempre vem string maiúscula ou padrão
         type: (e.type || 'VISITOR').toUpperCase(),
-        gender: (e.gender || 'M').toUpperCase(), // Se null, assume M
+        gender: (e.gender || 'M').toUpperCase(),
         ageGroup: (e.ageGroup || 'ADULTO').toUpperCase(),
         church: e.church || 'Não Informado',
         marketing: e.marketingSource || 'Outros',
         checkpointName: e.checkpoint?.name || 'Indefinido'
       })),
-
-      // Entradas via Scanner (Converte Idade Numérica -> Faixa Etária)
       ...scannerEntries.map(e => {
+        // Calcula faixa etária se vier do scanner
         let derivedGroup = 'ADULTO';
         if (e.person.age !== null) {
           if (e.person.age <= 12) derivedGroup = 'CRIANCA';
           else if (e.person.age <= 18) derivedGroup = 'JOVEM';
         }
-
         return {
           timestamp: e.timestamp,
           quantity: 1,
@@ -259,39 +256,35 @@ app.get('/dashboard', async (req, res) => {
       })
     ];
 
-    // 3. Estruturas de Agregação
+    // 3. Processamento
     const timeline: Record<string, Record<string, number>> = {};
     const checkpointsData: Record<string, Record<string, any>> = {};
 
-    // 4. Processamento
     allEntries.forEach(e => {
+      // Ajuste de Fuso Horário Simples (Pega o dia local do servidor)
       const date = new Date(e.timestamp);
       const day = date.getDate().toString();
       const hour = date.getHours().toString();
       const local = e.checkpointName;
 
-      // > Timeline
+      // Timeline
       if (!timeline[day]) timeline[day] = {};
       if (!timeline[day][hour]) timeline[day][hour] = 0;
       timeline[day][hour] += e.quantity;
 
-      // > Checkpoints (Dados do Dia)
+      // Checkpoints
       if (!checkpointsData[day]) checkpointsData[day] = {};
       if (!checkpointsData[day][local]) {
         checkpointsData[day][local] = {
-          total: 0,
-          gender: { M: 0, F: 0 },
-          age: { CRIANCA: 0, JOVEM: 0, ADULTO: 0 },
-          type: { MEMBER: 0, VISITOR: 0 },
-          marketing: {},
-          church: {}
+          total: 0, gender: { M: 0, F: 0 }, age: { CRIANCA: 0, JOVEM: 0, ADULTO: 0 },
+          type: { MEMBER: 0, VISITOR: 0 }, marketing: {}, church: {}
         };
       }
 
       const stats = checkpointsData[day][local];
       stats.total += e.quantity;
 
-      // Lógica de Soma Segura (Verifica todas as variações possíveis)
+      // Soma Inteligente (Aceita 'M', 'Masculino', 'Male', etc)
       if (e.gender.startsWith('M')) stats.gender.M += e.quantity;
       else stats.gender.F += e.quantity;
 
@@ -302,22 +295,19 @@ app.get('/dashboard', async (req, res) => {
       if (e.type.includes('MEMBER') || e.type.includes('MEMBRO')) stats.type.MEMBER += e.quantity;
       else stats.type.VISITOR += e.quantity;
 
-      // Marketing
       if (e.marketing) stats.marketing[e.marketing] = (stats.marketing[e.marketing] || 0) + e.quantity;
-
-      // Igreja
       if (e.church) stats.church[e.church] = (stats.church[e.church] || 0) + e.quantity;
     });
 
     res.json({ timeline, checkpointsData });
 
   } catch (error) {
-    console.error("Erro Dashboard:", error);
-    res.status(500).json({ error: "Erro ao processar dashboard" });
+    console.error(error);
+    res.status(500).json({ error: "Erro no dashboard" });
   }
 });
 
-// --- ROTAS AUXILIARES ---
+
 
 // Lista locais
 app.get('/checkpoints', async (req, res) => {
