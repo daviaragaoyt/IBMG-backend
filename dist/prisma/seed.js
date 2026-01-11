@@ -15,37 +15,45 @@ const prisma = new client_1.PrismaClient();
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
         console.log('🌱 Iniciando seed do banco de dados...');
-        // 1. Locais (Checkpoints)
+        // 1. Locais (Checkpoints) - USANDO ENUMS, NÃO STRINGS
         const locations = [
-            { name: "Recepção / Entrada", category: "GENERAL" },
-            { name: "Sala Profética", category: "PROPHETIC" },
-            { name: "Consolidação", category: "CONSOLIDATION" },
-            { name: "Kombi Evangelista", category: "EVANGELISM" },
-            { name: "Tenda de Oração", category: "PRAYER" },
+            { name: "Recepção / Entrada", category: client_1.CheckpointCategory.GENERAL },
+            { name: "Sala Profética", category: client_1.CheckpointCategory.PROPHETIC },
+            { name: "Consolidação", category: client_1.CheckpointCategory.CONSOLIDATION },
+            { name: "Kombi Evangelista", category: client_1.CheckpointCategory.EVANGELISM },
+            { name: "Tenda de Oração", category: client_1.CheckpointCategory.PRAYER },
+            { name: "Salinha Kids", category: client_1.CheckpointCategory.KIDS }, // Adicionei caso falte
+            { name: "Livraria", category: client_1.CheckpointCategory.STORE } // Adicionei caso falte
         ];
         for (const loc of locations) {
-            const exists = yield prisma.checkpoint.findFirst({ where: { name: loc.name } });
-            if (!exists) {
-                yield prisma.checkpoint.create({ data: loc });
-                console.log(`✅ Local criado: ${loc.name}`);
-            }
-        }
-        // 2. Criar um Admin padrão (Opcional, para facilitar testes)
-        const adminEmail = "admin@ibmg.com";
-        const adminExists = yield prisma.person.findUnique({ where: { email: adminEmail } });
-        if (!adminExists) {
-            yield prisma.person.create({
-                data: {
-                    name: "Admin IBMG",
-                    email: adminEmail,
-                    type: "MEMBER",
-                    role: "STAFF",
-                    church: "Ibmg Sede",
-                    age: 30
+            // Upsert é melhor que findFirst + create para evitar erros de rodar 2x
+            yield prisma.checkpoint.upsert({
+                where: { name: loc.name },
+                update: {},
+                create: {
+                    name: loc.name,
+                    category: loc.category
                 }
             });
-            console.log(`👤 Admin criado: ${adminEmail} (Role: STAFF)`);
+            console.log(`✅ Local garantido: ${loc.name}`);
         }
+        // 2. Criar um Admin padrão
+        const adminEmail = "admin@ibmg.com";
+        yield prisma.person.upsert({
+            where: { email: adminEmail },
+            update: {
+                role: client_1.Role.STAFF // Garante que é STAFF se já existir
+            },
+            create: {
+                name: "Admin IBMG",
+                email: adminEmail,
+                type: client_1.PersonType.MEMBER, // Enum correto
+                role: client_1.Role.STAFF, // Enum correto
+                church: "Ibmg Sede",
+                age: 30
+            }
+        });
+        console.log(`👤 Admin garantido: ${adminEmail}`);
         console.log('🏁 Seed finalizado!');
     });
 }

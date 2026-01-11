@@ -1,8 +1,14 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { PrismaClient } from '@prisma/client';
+// 1. ATUALIZE OS IMPORTS NO TOPO
+import {
+  PrismaClient,
+  PersonType,       // <--- Adicionar
+  Role,             // <--- Adicionar
+  CheckpointCategory // <--- Adicionar (se for usar em outro lugar)
+} from '@prisma/client';
 import { startOfDay, endOfDay } from 'date-fns';
 import { z } from 'zod'; // Biblioteca de validação
 
@@ -372,15 +378,17 @@ app.put('/person/:id', async (req, res) => {
   catch (e) { res.status(500).json({ error: "Erro update" }); }
 });
 
-// Cadastro Rápido
 app.post('/register', async (req, res) => {
   try {
-    const data = RegisterSchema.parse(req.body); // Valida dados com Zod
+    const data = RegisterSchema.parse(req.body);
+
     const user = await prisma.person.create({
       data: {
         ...data,
         age: data.age ? Number(data.age) : null,
-        role: data.isStaff ? 'STAFF' : 'PARTICIPANT'
+        // CORREÇÃO AQUI: Forçar o tipo para o Enum do Prisma
+        type: data.type as PersonType,
+        role: data.isStaff ? Role.STAFF : Role.PARTICIPANT
       }
     });
     res.json(user);

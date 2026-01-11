@@ -1,43 +1,58 @@
 // prisma/seed.ts
-import { PrismaClient } from '@prisma/client'
+import {
+    PrismaClient,
+    CheckpointCategory, // <--- Importados agora que o 'npx prisma generate' rodou
+    PersonType,
+    Role
+} from '@prisma/client'
+
 const prisma = new PrismaClient()
 
 async function main() {
     console.log('🌱 Iniciando seed do banco de dados...')
 
-    // 1. Locais (Checkpoints)
+    // 1. Locais (Checkpoints) - USANDO ENUMS, NÃO STRINGS
     const locations = [
-        { name: "Recepção / Entrada", category: "GENERAL" },
-        { name: "Sala Profética", category: "PROPHETIC" },
-        { name: "Consolidação", category: "CONSOLIDATION" },
-        { name: "Kombi Evangelista", category: "EVANGELISM" },
-        { name: "Tenda de Oração", category: "PRAYER" },
+        { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
+        { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
+        { name: "Consolidação", category: CheckpointCategory.CONSOLIDATION },
+        { name: "Kombi Evangelista", category: CheckpointCategory.EVANGELISM },
+        { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
+        { name: "Salinha Kids", category: CheckpointCategory.KIDS }, // Adicionei caso falte
+        { name: "Livraria", category: CheckpointCategory.STORE } // Adicionei caso falte
     ]
 
     for (const loc of locations) {
-        const exists = await prisma.checkpoint.findFirst({ where: { name: loc.name } })
-        if (!exists) {
-            await prisma.checkpoint.create({ data: loc })
-            console.log(`✅ Local criado: ${loc.name}`)
-        }
-    }
-
-    // 2. Criar um Admin padrão (Opcional, para facilitar testes)
-    const adminEmail = "admin@ibmg.com"
-    const adminExists = await prisma.person.findUnique({ where: { email: adminEmail } })
-    if (!adminExists) {
-        await prisma.person.create({
-            data: {
-                name: "Admin IBMG",
-                email: adminEmail,
-                type: "MEMBER",
-                role: "STAFF",
-                church: "Ibmg Sede",
-                age: 30
+        // Upsert é melhor que findFirst + create para evitar erros de rodar 2x
+        await prisma.checkpoint.upsert({
+            where: { name: loc.name },
+            update: {},
+            create: {
+                name: loc.name,
+                category: loc.category
             }
         })
-        console.log(`👤 Admin criado: ${adminEmail} (Role: STAFF)`)
+        console.log(`✅ Local garantido: ${loc.name}`)
     }
+
+    // 2. Criar um Admin padrão
+    const adminEmail = "admin@ibmg.com"
+
+    await prisma.person.upsert({
+        where: { email: adminEmail },
+        update: {
+            role: Role.STAFF // Garante que é STAFF se já existir
+        },
+        create: {
+            name: "Admin IBMG",
+            email: adminEmail,
+            type: PersonType.MEMBER, // Enum correto
+            role: Role.STAFF,        // Enum correto
+            church: "Ibmg Sede",
+            age: 30
+        }
+    })
+    console.log(`👤 Admin garantido: ${adminEmail}`)
 
     console.log('🏁 Seed finalizado!')
 }
