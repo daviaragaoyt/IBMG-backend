@@ -6,7 +6,7 @@
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "postinstall": "prisma generate",
-    "start": "node dist/index.js"
+    "start": "TZ='America/Sao_Paulo' node dist/server.js"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
