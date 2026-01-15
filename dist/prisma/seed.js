@@ -17,13 +17,13 @@ function main() {
         console.log('🌱 Iniciando seed do banco de dados...');
         // 1. Locais (Checkpoints) - USANDO ENUMS, NÃO STRINGS
         const locations = [
-            { name: "Recepção / Entrada", category: client_1.CheckpointCategory.GENERAL },
-            { name: "Sala Profética", category: client_1.CheckpointCategory.PROPHETIC },
-            { name: "Consolidação", category: client_1.CheckpointCategory.CONSOLIDATION },
-            { name: "Kombi Evangelista", category: client_1.CheckpointCategory.EVANGELISM },
-            { name: "Tenda de Oração", category: client_1.CheckpointCategory.PRAYER },
-            { name: "Salinha Kids", category: client_1.CheckpointCategory.KIDS }, // Adicionei caso falte
-            { name: "Livraria", category: client_1.CheckpointCategory.STORE } // Adicionei caso falte
+            { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
+            { name: "Salinha Kids", category: CheckpointCategory.KIDS },
+            { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
+            { name: "Cantina", category: CheckpointCategory.PRAYER },
+            { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
+            { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
+            { name: "Livraria", category: CheckpointCategory.STORE }
         ];
         for (const loc of locations) {
             // Upsert é melhor que findFirst + create para evitar erros de rodar 2x
@@ -60,7 +60,7 @@ function main() {
 main()
     .then(() => __awaiter(void 0, void 0, void 0, function* () { yield prisma.$disconnect(); }))
     .catch((e) => __awaiter(void 0, void 0, void 0, function* () {
-    console.error(e);
-    yield prisma.$disconnect();
-    process.exit(1);
-}));
+        console.error(e);
+        yield prisma.$disconnect();
+        process.exit(1);
+    }));

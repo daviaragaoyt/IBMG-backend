@@ -359,6 +359,8 @@ app.get('/setup', async (req, res) => {
         { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
         { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
+        { name: "Cantina", category: CheckpointCategory.PRAYER },
+        { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
         { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
         { name: "Livraria", category: CheckpointCategory.STORE }
       ],

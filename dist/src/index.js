@@ -364,9 +364,11 @@ app.post('/register', (req, res) => __awaiter(void 0, void 0, void 0, function* 
     try {
         const data = RegisterSchema.parse(req.body);
         const user = yield prisma.person.create({
-            data: Object.assign(Object.assign({}, data), { age: data.age ? Number(data.age) : null, 
+            data: Object.assign(Object.assign({}, data), {
+                age: data.age ? Number(data.age) : null,
                 // CORREÇÃO AQUI: Forçar o tipo para o Enum do Prisma
-                type: data.type, role: data.isStaff ? client_1.Role.STAFF : client_1.Role.PARTICIPANT })
+                type: data.type, role: data.isStaff ? client_1.Role.STAFF : client_1.Role.PARTICIPANT
+            })
         });
         res.json(user);
     }
@@ -397,11 +399,13 @@ app.get('/setup', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         yield prisma.checkpoint.createMany({
             data: [
-                { name: "Recepção / Entrada", category: "GENERAL" },
-                { name: "Salinha Kids", category: "KIDS" },
-                { name: "Tenda de Oração", category: "PRAYER" },
-                { name: "Sala Profética", category: "PROPHETIC" },
-                { name: "Livraria", category: "STORE" }
+                { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
+                { name: "Salinha Kids", category: CheckpointCategory.KIDS },
+                { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
+                { name: "Cantina", category: CheckpointCategory.PRAYER },
+                { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
+                { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
+                { name: "Livraria", category: CheckpointCategory.STORE }
             ],
             skipDuplicates: true
         });
