@@ -14,6 +14,7 @@ async function main() {
     // 1. Locais (Checkpoints) - USANDO ENUMS, NÃO STRINGS
     const locations = [
         { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
+        { name: "Psalms", category: CheckpointCategory.STORE },
         { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
         { name: "Cantina", category: CheckpointCategory.PRAYER },

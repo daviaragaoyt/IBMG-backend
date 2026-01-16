@@ -357,6 +357,7 @@ app.get('/setup', async (req, res) => {
     await prisma.checkpoint.createMany({
       data: [
         { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
+        { name: "Psalms", category: CheckpointCategory.STORE },
         { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
         { name: "Cantina", category: CheckpointCategory.PRAYER },
