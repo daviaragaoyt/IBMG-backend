@@ -206,9 +206,9 @@ app.post('/track', async (req: Request, res: Response) => {
 });
 app.get('/dashboard', async (req, res) => {
   try {
-    // Pega dados de 2025 e 2026
-    const start = new Date('2025-01-01');
-    const end = new Date('2026-12-31');
+
+    const start = new Date('2026-01-01');
+    const end = new Date('2026-02-28');
 
     const [manual, scanner] = await Promise.all([
       prisma.manualEntry.findMany({

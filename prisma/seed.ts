@@ -14,12 +14,12 @@ async function main() {
     // 1. Locais (Checkpoints) - USANDO ENUMS, NÃO STRINGS
     const locations = [
         { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
-        { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
-        { name: "Consolidação", category: CheckpointCategory.CONSOLIDATION },
-        { name: "Kombi Evangelista", category: CheckpointCategory.EVANGELISM },
+        { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
-        { name: "Salinha Kids", category: CheckpointCategory.KIDS }, // Adicionei caso falte
-        { name: "Livraria", category: CheckpointCategory.STORE } // Adicionei caso falte
+        { name: "Cantina", category: CheckpointCategory.PRAYER },
+        { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
+        { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
+        { name: "Livraria", category: CheckpointCategory.STORE }
     ]
 
     for (const loc of locations) {
