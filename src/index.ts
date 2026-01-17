@@ -1,6 +1,7 @@
+// --- 1. CONFIGURAÇÃO DE FUSO HORÁRIO (Mantenha no topo) ---
 process.env.TZ = 'America/Sao_Paulo';
-import express, { Request, Response } from 'express';
 
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -17,21 +18,16 @@ const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
-// --- MIDDLEWARES ---
 app.use(cors({ origin: '*' }));
 app.use(helmet());
 app.use(express.json());
 app.use(morgan('dev'));
 
-// --- CONSTANTES ---
 const CHURCHES = [
   "Ibmg Alphaville", "Ibmg Orlando", "Ibmg Sede", "Ibmg Santa Maria", "Ibmg Caldas", "Outra"
 ];
-
-// Categorias que permitem reentrada (Bipar várias vezes no dia)
 const SERVICE_CATEGORIES = ['PROPHETIC', 'PRAYER', 'EVANGELISM', 'CONSOLIDATION', 'STORE'];
 
-// --- VALIDAÇÕES ZOD ---
 const CountSchema = z.object({
   checkpointId: z.string().min(1),
   type: z.enum(['MEMBER', 'VISITOR']),
@@ -47,6 +43,9 @@ const RegisterSchema = z.object({
   email: z.string().email().optional().or(z.literal('')),
   phone: z.string().optional().nullable(),
   type: z.enum(['MEMBER', 'VISITOR', 'LEADER', 'PASTOR']).default('VISITOR'),
+
+  department: z.string().optional(),
+
   church: z.string().optional(),
   gender: z.string().optional(),
   marketingSource: z.string().optional(),
@@ -54,7 +53,6 @@ const RegisterSchema = z.object({
   isStaff: z.boolean().optional()
 });
 
-// --- ROTAS BÁSICAS ---
 app.get('/', (req, res) => {
   res.json({ status: 'online', timestamp: new Date() });
 });
@@ -77,13 +75,16 @@ app.post('/auth/login', async (req: Request, res: Response) => {
 
     if (!user) return res.status(404).json({ error: "E-mail não encontrado." });
 
-    console.log(`[LOGIN] ${user.name} (${user.role}) acessou.`);
+
+    console.log(`[LOGIN] ${user.name} (${user.role}) - Dept: ${user.department || 'Geral'}`);
+
     res.json(user);
   } catch (error) {
     console.error("Erro Login:", error);
     res.status(500).json({ error: "Erro interno no servidor." });
   }
 });
+
 app.get('/person/by-email', async (req: Request, res: Response) => {
   const { email } = req.query;
   if (!email) return res.status(400).json({ error: "E-mail obrigatório." });
@@ -104,11 +105,11 @@ app.get('/person/by-email', async (req: Request, res: Response) => {
     res.status(500).json({ error: "Erro interno." });
   }
 });
+
 app.post('/count', async (req: Request, res: Response) => {
   try {
     const data = CountSchema.parse(req.body);
 
-    // Verifica se o último registro foi idêntico e feito há menos de 2 segundos
     const lastEntry = await prisma.manualEntry.findFirst({
       where: { checkpointId: data.checkpointId, type: data.type as PersonType },
       orderBy: { timestamp: 'desc' }
@@ -116,7 +117,8 @@ app.post('/count', async (req: Request, res: Response) => {
 
     if (lastEntry) {
       const diff = new Date().getTime() - new Date(lastEntry.timestamp).getTime();
-      if (diff < 2000 && lastEntry.gender === data.gender && lastEntry.ageGroup === data.ageGroup) {
+
+      if (diff < 500 && lastEntry.gender === data.gender && lastEntry.ageGroup === data.ageGroup) {
         return res.json({ success: true, message: "Duplicidade evitada", ignored: true });
       }
     }
@@ -134,7 +136,6 @@ app.post('/count', async (req: Request, res: Response) => {
       }
     });
 
-    // Retorna o total do dia para feedback visual imediato
     const todayStart = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
     const totalToday = await prisma.manualEntry.aggregate({
@@ -151,7 +152,6 @@ app.post('/count', async (req: Request, res: Response) => {
   }
 });
 
-// Scanner QR Code (Tracking com lógica de reentrada)
 app.post('/track', async (req: Request, res: Response) => {
   const { personId, checkpointId } = req.body;
   if (!personId || !checkpointId) return res.status(400).json({ error: "IDs obrigatórios" });
@@ -173,7 +173,6 @@ app.post('/track', async (req: Request, res: Response) => {
       include: { person: true }
     });
 
-    // Rate Limit de 60 segundos para evitar leitura dupla acidental
     if (existing) {
       const diff = (new Date().getTime() - new Date(existing.timestamp).getTime()) / 1000;
       if (diff < 60) return res.json({ success: true, status: 'IGNORED', person: existing.person, message: "⏳ Aguarde..." });
@@ -204,9 +203,32 @@ app.post('/track', async (req: Request, res: Response) => {
     res.status(500).json({ success: false, error: "Erro interno" });
   }
 });
+
+app.post('/consolidation/save', async (req: Request, res: Response) => {
+  try {
+    const { name, phone, decision, observer } = req.body;
+
+    const person = await prisma.person.create({
+      data: {
+        name,
+        phone,
+        type: 'VISITOR', // Visitante por padrão
+        role: 'PARTICIPANT',
+        marketingSource: `Decisão: ${decision}`, // Salva o tipo de decisão
+        church: 'Consolidação', // Marca a origem
+        department: observer // Opcional: Salva quem atendeu no campo department
+      }
+    });
+
+    res.json({ success: true, person });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Erro ao salvar ficha" });
+  }
+});
+
 app.get('/dashboard', async (req, res) => {
   try {
-
     const start = new Date('2026-01-01');
     const end = new Date('2026-02-28');
 
@@ -220,6 +242,7 @@ app.get('/dashboard', async (req, res) => {
         select: { timestamp: true, checkpoint: true, person: true }
       })
     ]);
+
     const all = [
       ...manual.map(e => ({
         ts: e.timestamp, qty: e.quantity, type: e.type, gender: e.gender, age: e.ageGroup,
@@ -266,10 +289,39 @@ app.get('/dashboard', async (req, res) => {
     res.status(500).json({ error: "Erro dashboard" });
   }
 });
-
 app.get('/checkpoints', async (req, res) => {
-  const list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
-  res.json(list);
+  try {
+    // 1. Tenta buscar os locais
+    let list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
+
+    // 2. AUTO-SEED: Se a lista estiver vazia, cria os padrões automaticamente
+    if (list.length === 0) {
+      console.log("⚠️ Banco de Locais vazio! Criando padrões agora...");
+
+      await prisma.checkpoint.createMany({
+        data: [
+          { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
+          { name: "Kombi Evangelística", category: CheckpointCategory.GENERAL },
+          { name: "Salinha Kids", category: CheckpointCategory.KIDS },
+          { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
+          { name: "Cantina", category: CheckpointCategory.PRAYER },
+          { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
+          { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
+          { name: "Livraria", category: CheckpointCategory.STORE },
+          { name: "Psalms", category: CheckpointCategory.STORE }
+        ],
+        skipDuplicates: true
+      });
+
+      // 3. Busca novamente a lista preenchida
+      list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
+    }
+
+    res.json(list);
+  } catch (e) {
+    console.error("Erro ao buscar checkpoints:", e);
+    res.status(500).json({ error: "Erro interno" });
+  }
 });
 
 app.get('/people', async (req, res) => {
@@ -303,16 +355,16 @@ app.get('/people/incomplete', async (req, res) => {
   });
   res.json(incomplete);
 });
+
 app.put('/person/:id', async (req, res) => {
   const { id } = req.params;
-  const { age, ...rest } = req.body; // Separa a idade do resto dos dados
+  const { age, ...rest } = req.body;
 
   try {
     const updated = await prisma.person.update({
       where: { id },
       data: {
-        ...rest, // Salva nome, telefone, genero, etc.
-        // O PULO DO GATO: Converte idade para Número se ela existir
+        ...rest,
         age: age ? Number(age) : undefined
       }
     });
@@ -332,7 +384,9 @@ app.post('/register', async (req, res) => {
         ...d,
         age: Number(d.age) || null,
         type: d.type as PersonType,
-        role: d.isStaff ? Role.STAFF : Role.PARTICIPANT
+        role: d.isStaff ? Role.STAFF : Role.PARTICIPANT,
+        // Salva o departamento se enviado (Se não tiver coluna no banco, isso será ignorado se não estiver no schema.prisma)
+        department: d.department
       }
     });
     res.json(user);
@@ -344,8 +398,8 @@ app.post('/register', async (req, res) => {
 app.get('/export', async (req, res) => {
   try {
     const data = await prisma.person.findMany({ orderBy: { createdAt: 'desc' } });
-    let csv = "Nome,Email,Tipo,Genero,Igreja,Origem\n";
-    data.forEach(p => csv += `${p.name},${p.email},${p.type},${p.gender},${p.church},${p.marketingSource}\n`);
+    let csv = "Nome,Email,Tipo,Genero,Igreja,Origem,Departamento\n";
+    data.forEach(p => csv += `${p.name},${p.email},${p.type},${p.gender},${p.church},${p.marketingSource},${p.department}\n`);
     res.header('Content-Type', 'text/csv').attachment('dados.csv').send(csv);
   } catch (e) {
     res.status(500).send("Erro exportação");
@@ -357,6 +411,7 @@ app.get('/setup', async (req, res) => {
     await prisma.checkpoint.createMany({
       data: [
         { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
+        { name: "Kombi Evangelística", category: CheckpointCategory.GENERAL }, // Novo
         { name: "Psalms", category: CheckpointCategory.STORE },
         { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
@@ -367,7 +422,7 @@ app.get('/setup', async (req, res) => {
       ],
       skipDuplicates: true
     });
-    res.send("Setup OK");
+    res.send("Setup OK: Locais criados.");
   } catch (e) { res.status(500).send("Erro setup: " + e); }
 });
 
