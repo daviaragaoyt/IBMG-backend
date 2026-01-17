@@ -18,16 +18,21 @@ const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
+// --- MIDDLEWARES ---
 app.use(cors({ origin: '*' }));
 app.use(helmet());
 app.use(express.json());
 app.use(morgan('dev'));
 
+// --- CONSTANTES ---
 const CHURCHES = [
   "Ibmg Alphaville", "Ibmg Orlando", "Ibmg Sede", "Ibmg Santa Maria", "Ibmg Caldas", "Outra"
 ];
+
+// Categorias que permitem reentrada (Bipar várias vezes no dia)
 const SERVICE_CATEGORIES = ['PROPHETIC', 'PRAYER', 'EVANGELISM', 'CONSOLIDATION', 'STORE'];
 
+// --- VALIDAÇÕES ZOD ---
 const CountSchema = z.object({
   checkpointId: z.string().min(1),
   type: z.enum(['MEMBER', 'VISITOR']),
@@ -42,8 +47,9 @@ const RegisterSchema = z.object({
   name: z.string().min(3),
   email: z.string().email().optional().or(z.literal('')),
   phone: z.string().optional().nullable(),
-  type: z.enum(['MEMBER', 'VISITOR', 'LEADER', 'PASTOR']).default('VISITOR'),
+  type: z.enum(['MEMBER', 'VISITOR', 'LEADER', 'PASTOR', 'STAFF']).default('VISITOR'),
 
+  // Campo crucial para definir a tela do usuário (KIDS, EVANGELISM, etc.)
   department: z.string().optional(),
 
   church: z.string().optional(),
@@ -53,12 +59,16 @@ const RegisterSchema = z.object({
   isStaff: z.boolean().optional()
 });
 
+// --- ROTAS BÁSICAS ---
 app.get('/', (req, res) => {
   res.json({ status: 'online', timestamp: new Date() });
 });
 
 app.get('/config/churches', (req, res) => res.json(CHURCHES));
 
+// ---------------------------------------------------------
+// 1. AUTENTICAÇÃO E LOGIN
+// ---------------------------------------------------------
 app.post('/auth/login', async (req: Request, res: Response) => {
   const { email } = req.body;
   try {
@@ -75,9 +85,9 @@ app.post('/auth/login', async (req: Request, res: Response) => {
 
     if (!user) return res.status(404).json({ error: "E-mail não encontrado." });
 
-
     console.log(`[LOGIN] ${user.name} (${user.role}) - Dept: ${user.department || 'Geral'}`);
 
+    // Retorna o usuário com o departamento para o Front decidir a tela
     res.json(user);
   } catch (error) {
     console.error("Erro Login:", error);
@@ -91,12 +101,7 @@ app.get('/person/by-email', async (req: Request, res: Response) => {
 
   try {
     const person = await prisma.person.findFirst({
-      where: {
-        email: {
-          equals: String(email).trim(),
-          mode: 'insensitive'
-        }
-      }
+      where: { email: { equals: String(email).trim(), mode: 'insensitive' } }
     });
 
     if (!person) return res.status(404).json({ error: "E-mail não encontrado." });
@@ -106,10 +111,14 @@ app.get('/person/by-email', async (req: Request, res: Response) => {
   }
 });
 
+// ---------------------------------------------------------
+// 2. OPERAÇÃO (CONTADOR E MILAGRES)
+// ---------------------------------------------------------
 app.post('/count', async (req: Request, res: Response) => {
   try {
     const data = CountSchema.parse(req.body);
 
+    // Debounce para evitar duplo clique acidental (500ms)
     const lastEntry = await prisma.manualEntry.findFirst({
       where: { checkpointId: data.checkpointId, type: data.type as PersonType },
       orderBy: { timestamp: 'desc' }
@@ -117,8 +126,8 @@ app.post('/count', async (req: Request, res: Response) => {
 
     if (lastEntry) {
       const diff = new Date().getTime() - new Date(lastEntry.timestamp).getTime();
-
-      if (diff < 500 && lastEntry.gender === data.gender && lastEntry.ageGroup === data.ageGroup) {
+      // Se for muito rápido e os dados forem idênticos, ignora
+      if (diff < 500 && lastEntry.gender === data.gender && lastEntry.ageGroup === data.ageGroup && lastEntry.marketingSource === data.marketingSource) {
         return res.json({ success: true, message: "Duplicidade evitada", ignored: true });
       }
     }
@@ -131,11 +140,12 @@ app.post('/count', async (req: Request, res: Response) => {
         ageGroup: data.ageGroup || 'ADULTO',
         gender: data.gender || 'M',
         quantity: data.quantity,
-        marketingSource: data.marketingSource || null,
+        marketingSource: data.marketingSource || null, // Aqui entram tags como "VIDA_SALVA", "CURA"
         timestamp: new Date()
       }
     });
 
+    // Retorna total do dia para feedback
     const todayStart = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
     const totalToday = await prisma.manualEntry.aggregate({
@@ -152,6 +162,9 @@ app.post('/count', async (req: Request, res: Response) => {
   }
 });
 
+// ---------------------------------------------------------
+// 3. SCANNER QR CODE (Com Lógica de Reentrada)
+// ---------------------------------------------------------
 app.post('/track', async (req: Request, res: Response) => {
   const { personId, checkpointId } = req.body;
   if (!personId || !checkpointId) return res.status(400).json({ error: "IDs obrigatórios" });
@@ -204,6 +217,9 @@ app.post('/track', async (req: Request, res: Response) => {
   }
 });
 
+// ---------------------------------------------------------
+// 4. CONSOLIDAÇÃO (Ficha Digital)
+// ---------------------------------------------------------
 app.post('/consolidation/save', async (req: Request, res: Response) => {
   try {
     const { name, phone, decision, observer } = req.body;
@@ -212,11 +228,11 @@ app.post('/consolidation/save', async (req: Request, res: Response) => {
       data: {
         name,
         phone,
-        type: 'VISITOR', // Visitante por padrão
+        type: 'VISITOR',
         role: 'PARTICIPANT',
-        marketingSource: `Decisão: ${decision}`, // Salva o tipo de decisão
-        church: 'Consolidação', // Marca a origem
-        department: observer // Opcional: Salva quem atendeu no campo department
+        marketingSource: `Decisão: ${decision}`, // Salva a decisão para o Dashboard ler
+        church: 'Consolidação',
+        department: observer // Opcional: Quem atendeu
       }
     });
 
@@ -227,6 +243,9 @@ app.post('/consolidation/save', async (req: Request, res: Response) => {
   }
 });
 
+// ---------------------------------------------------------
+// 5. DASHBOARD (Inteligência de Dados)
+// ---------------------------------------------------------
 app.get('/dashboard', async (req, res) => {
   try {
     const start = new Date('2026-01-01');
@@ -280,7 +299,10 @@ app.get('/dashboard', async (req, res) => {
       if (String(e.type).includes('MEMBER')) st.type.MEMBER += e.qty; else st.type.VISITOR += e.qty;
       if (String(e.gender).startsWith('M')) st.gender.M += e.qty; else st.gender.F += e.qty;
       if (String(e.age).includes('CRIANCA')) st.age.CRIANCA += e.qty; else if (String(e.age).includes('JOVEM')) st.age.JOVEM += e.qty; else st.age.ADULTO += e.qty;
+
+      // Aqui o Dashboard vai contar "VIDA_SALVA" ou "CURA" como marketingSource
       if (e.mkt) st.marketing[e.mkt] = (st.marketing[e.mkt] || 0) + e.qty;
+
       if (e.church) st.church[e.church] = (st.church[e.church] || 0) + e.qty;
     });
 
@@ -289,12 +311,15 @@ app.get('/dashboard', async (req, res) => {
     res.status(500).json({ error: "Erro dashboard" });
   }
 });
+
+// ---------------------------------------------------------
+// 6. LOCAIS E AUTO-SEED (Configuração Automática)
+// ---------------------------------------------------------
 app.get('/checkpoints', async (req, res) => {
   try {
-    // 1. Tenta buscar os locais
     let list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
 
-    // 2. AUTO-SEED: Se a lista estiver vazia, cria os padrões automaticamente
+    // Se a lista estiver vazia, cria os locais padrão automaticamente
     if (list.length === 0) {
       console.log("⚠️ Banco de Locais vazio! Criando padrões agora...");
 
@@ -313,7 +338,6 @@ app.get('/checkpoints', async (req, res) => {
         skipDuplicates: true
       });
 
-      // 3. Busca novamente a lista preenchida
       list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
     }
 
@@ -324,6 +348,9 @@ app.get('/checkpoints', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------
+// 7. ROTAS AUXILIARES
+// ---------------------------------------------------------
 app.get('/people', async (req, res) => {
   const { search } = req.query;
   if (!search || String(search).length < 3) return res.json([]);
@@ -376,6 +403,9 @@ app.put('/person/:id', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------
+// 8. CADASTRO (Com Depto para definir a tela)
+// ---------------------------------------------------------
 app.post('/register', async (req, res) => {
   try {
     const d = RegisterSchema.parse(req.body);
@@ -385,8 +415,7 @@ app.post('/register', async (req, res) => {
         age: Number(d.age) || null,
         type: d.type as PersonType,
         role: d.isStaff ? Role.STAFF : Role.PARTICIPANT,
-        // Salva o departamento se enviado (Se não tiver coluna no banco, isso será ignorado se não estiver no schema.prisma)
-        department: d.department
+        department: d.department // Salva o departamento (KIDS, EVANGELISM...)
       }
     });
     res.json(user);
@@ -406,19 +435,20 @@ app.get('/export', async (req, res) => {
   }
 });
 
+// Setup Manual (Caso precise forçar)
 app.get('/setup', async (req, res) => {
   try {
     await prisma.checkpoint.createMany({
       data: [
         { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
-        { name: "Kombi Evangelística", category: CheckpointCategory.GENERAL }, // Novo
-        { name: "Psalms", category: CheckpointCategory.STORE },
+        { name: "Kombi Evangelística", category: CheckpointCategory.GENERAL },
         { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
         { name: "Cantina", category: CheckpointCategory.PRAYER },
         { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
         { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
-        { name: "Livraria", category: CheckpointCategory.STORE }
+        { name: "Livraria", category: CheckpointCategory.STORE },
+        { name: "Psalms", category: CheckpointCategory.STORE }
       ],
       skipDuplicates: true
     });
