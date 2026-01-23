@@ -1,85 +1,176 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "postgresql" 
   url      = env("DATABASE_URL")
 }
-
 model Person {
   id              String   @id @default(uuid())
   name            String
-  email           String?  @unique // Opcional para visitantes
+  email           String?  @unique // Obrigatório para Staff logar
   phone           String?
   age             Int?
   gender          String?  // 'M' ou 'F'
  
-  type            PersonType @default(VISITOR) // MEMBER ou VISITOR
-  role            Role       @default(PARTICIPANT) // STAFF ou PARTICIPANT
-  church          String?    // Qual igreja pertence
-  marketingSource String?    // Como conheceu (Instagram, Faixa, etc)
-department      String?
+  type            PersonType @default(VISITOR)
+  role            Role       @default(PARTICIPANT)
+  
+  // Define qual tela o Staff vê (KIDS, CANTINA, RECEPTION, etc)
+  department      String?    
+  
+  church          String?
+  marketingSource String?    // Ex: "Instagram", "Decisão: Aceitou Jesus"
+  
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   movements       Movement[]
+  orders          Order[]    // Relacionamento com pedidos da pré-venda
 
   @@map("people")
 }
-
-// --- LOCAIS (Recepção, Kids, Tenda) ---
 model Checkpoint {
   id          String   @id @default(uuid())
   name        String   @unique
-  category    CheckpointCategory @default(GENERAL) // Para saber se bloqueia reentrada
-  capacity    Int?     // Capacidade máxima (Opcional)
+  category    CheckpointCategory @default(GENERAL)
 
-  // Relacionamentos
   movements     Movement[]
   manualEntries ManualEntry[]
+  sales         Sale[]
 
   @@map("checkpoints")
 }
 
-// --- MOVIMENTAÇÃO (QR Code / Scanner) ---
-// Registra CADA BIP do scanner
 model Movement {
   id           String   @id @default(uuid())
   timestamp    DateTime @default(now())
   
   personId     String
   person       Person     @relation(fields: [personId], references: [id])
-  department   String?
   checkpointId String
   checkpoint   Checkpoint @relation(fields: [checkpointId], references: [id])
 
   @@map("movements")
 }
 
-// --- CONTAGEM MANUAL (Botões +1) ---
-// Registra cliques no painel do Staff
 model ManualEntry {
   id              String   @id @default(uuid())
   timestamp       DateTime @default(now())
   quantity        Int      @default(1)
 
-  // Dados demográficos do clique
-  type            PersonType // MEMBER ou VISITOR
-  gender          String?    // 'M' ou 'F'
-  ageGroup        String?    // 'CRIANCA', 'JOVEM', 'ADULTO'
+  type            PersonType
+  gender          String?
+  ageGroup        String?
   church          String?
-  marketingSource String?
+  marketingSource String? // Tags como "VIDA_SALVA", "CURA"
 
   checkpointId    String
   checkpoint      Checkpoint @relation(fields: [checkpointId], references: [id])
 
   @@map("manual_entries")
 }
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  price       Decimal  @db.Decimal(10, 2)
+  category    String   // 'CANTINA' ou 'LOJA'
+  imageUrl    String?  // Foto do produto para a vitrine
+  
+  saleItems   SaleItem[]
+  orderItems  OrderItem[]
 
-// --- ENUMS (Opções Fixas) ---
+  @@map("products")
+}
+
+model Sale {
+  id            String   @id @default(uuid())
+  timestamp     DateTime @default(now())
+  total         Decimal  @db.Decimal(10, 2)
+  paymentMethod String   // PIX, DINHEIRO, CARTAO
+  
+  // Quem comprou? (Para estatísticas)
+  buyerType     PersonType @default(VISITOR)
+  buyerGender   String     @default("M")
+
+  checkpointId  String
+  checkpoint    Checkpoint @relation(fields: [checkpointId], references: [id])
+  
+  items         SaleItem[]
+
+  @@map("sales")
+}
+
+model SaleItem {
+  id        String  @id @default(uuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Decimal @db.Decimal(10, 2) // Preço congelado no momento da venda
+
+  @@map("sale_items")
+}
+// ... (outros models)
+
+model Meeting {
+  id          String   @id @default(uuid())
+  title       String   // Ex: "Alinhamento Kids", "Reunião Geral"
+  date        DateTime // Data da reunião (futura ou passada)
+  type        String   // 'AGENDADA' ou 'REALIZADA'
+  notes       String?  // A "Ata" ou pauta da reunião
+  
+  createdBy   String?  // Quem registrou (Nome do Staff)
+  createdAt   DateTime @default(now())
+
+  @@map("meetings")
+}
+model Order {
+  id            String      @id @default(uuid())
+  orderCode     String      @unique
+  
+  // Agora o PersonId é OBRIGATÓRIO (não opcional)
+  personId      String      
+  person        Person      @relation(fields: [personId], references: [id])
+  
+  // Campos de cache (caso a pessoa mude o nome depois, o pedido mantem o histórico)
+  buyerName     String 
+  buyerPhone    String
+
+  total         Decimal     @db.Decimal(10, 2)
+  status        OrderStatus @default(PENDING) 
+  
+  // --- NOVO: COMPROVANTE ---
+  proofUrl      String?     // Caminho da imagem do comprovante
+  // -------------------------
+
+  items         OrderItem[]
+  createdAt     DateTime    @default(now())
+  paidAt        DateTime?
+  deliveredAt   DateTime?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+
+  @@map("order_items")
+}
+model GlobalConfig {
+  key   String @id @unique // Ex: "MEETING_COUNT"
+  value String
+  
+  @@map("global_config")
+}
+
 enum PersonType {
   MEMBER
   VISITOR
@@ -88,14 +179,23 @@ enum PersonType {
 enum Role {
   STAFF
   PARTICIPANT
+  LEADER
+  PASTOR
 }
 
 enum CheckpointCategory {
-  GENERAL       // Entrada (Bloqueia reentrada)
-  KIDS          // Crianças (Bloqueia reentrada)
-  PROPHETIC     // Serviço (Permite reentrada)
-  PRAYER        // Serviço (Permite reentrada)
-  EVANGELISM    // Serviço
-  CONSOLIDATION // Serviço
-  STORE         // Loja
+  GENERAL
+  KIDS
+  PROPHETIC
+  PRAYER
+  EVANGELISM
+  CONSOLIDATION
+  STORE
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  DELIVERED
+  CANCELED
 }
