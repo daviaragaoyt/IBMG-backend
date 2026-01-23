@@ -4,8 +4,33 @@ import { prisma } from '../../lib/prisma';
 const router = Router();
 
 router.get('/meetings', async (req, res) => {
-    const meetings = await prisma.meeting.findMany({ orderBy: { date: 'desc' } });
-    res.json(meetings);
+    try {
+        // PASSO MÁGICO: Antes de listar, atualiza tudo que já passou do horário
+        const now = new Date();
+
+        // Opcional: subtrair 1 ou 2 horas para dar uma margem de segurança
+        // now.setHours(now.getHours() - 2); 
+
+        await prisma.meeting.updateMany({
+            where: {
+                type: 'AGENDADA', // Só mexe nas agendadas
+                date: { lt: now } // Cuja data seja MENOR que agora (já passou)
+            },
+            data: {
+                type: 'REALIZADA' // Ou outro status como 'PENDENTE_ATA'
+            }
+        });
+
+        // Agora busca a lista já atualizada
+        const meetings = await prisma.meeting.findMany({
+            orderBy: { date: 'desc' }
+        });
+
+        res.json(meetings);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: "Erro ao buscar reuniões." });
+    }
 });
 
 router.post('/meetings', async (req, res) => {
