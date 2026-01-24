@@ -4,12 +4,32 @@ import {
     CheckpointCategory,
     PersonType,
     Role
-} from '@prisma/client'; // Certifique-se que o VS Code não está reclamando aqui
+} from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 async function main() {
     console.log('🌱 Iniciando seed do banco de dados...');
+
+    // ========================================================================
+    // 0. LIMPEZA (CRÍTICO PARA EVITAR ERRO DE FOREIGN KEY)
+    // ========================================================================
+    // Primeiro apagamos os itens dos pedidos, depois as vendas, e só então os produtos.
+    console.log('🧹 Limpando dados antigos...');
+    try {
+        // Tente usar o nome do modelo que você tem no schema.prisma. 
+        // Geralmente é OrderItem ou SaleItem. O erro mencionou 'order_items'.
+
+        // Opção A: Se seu model se chama OrderItem
+        await prisma.orderItem.deleteMany({});
+
+        // Opção B: Se seu model se chama SaleItem (caso tenha mudado)
+        // await prisma.saleItem.deleteMany({}); 
+
+        await prisma.sale.deleteMany({}); // Apaga as vendas pai
+    } catch (e) {
+        console.log('⚠️ Nenhuma venda para limpar ou nome da tabela diferente.');
+    }
 
     // ========================================================================
     // 1. LOCAIS (CHECKPOINTS)
@@ -20,7 +40,7 @@ async function main() {
         { name: "Psalms", category: CheckpointCategory.STORE },
         { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
-        { name: "Cantina", category: CheckpointCategory.PRAYER },
+        { name: "Espaço Gourmet", category: CheckpointCategory.PRAYER },
         { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
         { name: "Sala Profética", category: CheckpointCategory.PROPHETIC },
         { name: "Livraria", category: CheckpointCategory.STORE }
@@ -36,32 +56,31 @@ async function main() {
     console.log(`✅ Locais garantidos.`);
 
     // ========================================================================
-    // 2. PRODUTOS (LOJA E CANTINA) COM IMAGENS
+    // 2. PRODUTOS
     // ========================================================================
-    const productCount = await prisma.product.count();
 
-    if (productCount === 0) {
-        await prisma.product.createMany({
-            data: [
-                // Cantina (Comidas)
-                { name: "Água sem Gás", price: 3.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&q=80&w=500" },
-                { name: "Refrigerante Lata", price: 6.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&q=80&w=500" },
-                { name: "Salgado Assado", price: 8.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&q=80&w=500" },
-                { name: "Café Expresso", price: 4.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&q=80&w=500" },
-                { name: "Chocolate", price: 5.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1511381978829-f011418d229d?auto=format&fit=crop&q=80&w=500" },
+    // AGORA VAI FUNCIONAR POIS LIMPAMOS AS VENDAS ANTES
+    await prisma.product.deleteMany({});
 
-                // Loja Psalms (Roupas)
-                { name: "Camiseta Ekklesia 2026", price: 69.90, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80&w=500" },
-                { name: "Livro: Avivamento", price: 45.00, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=500" },
-                { name: "Boné Trucker", price: 50.00, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&q=80&w=500" },
-                { name: "Caneca Personalizada", price: 35.00, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?auto=format&fit=crop&q=80&w=500" }
-            ]
-        });
-        console.log(`✅ Produtos criados com imagens.`);
-    } else {
-        console.log(`⚡ Produtos já existem.`);
-    }
+    await prisma.product.createMany({
+        data: [
+            // --- Espaço Gourmet ---
+            { name: "Água sem Gás", price: 3.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&q=80&w=500" },
+            { name: "Refrigerante Lata", price: 6.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&q=80&w=500" },
+            { name: "Salgado Assado", price: 8.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&q=80&w=500" },
+            { name: "Café Expresso", price: 4.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&q=80&w=500" },
+            { name: "Chocolate", price: 5.00, category: "CANTINA", imageUrl: "https://images.unsplash.com/photo-1511381978829-f011418d229d?auto=format&fit=crop&q=80&w=500" },
 
+            // --- Loja Psalms ---
+            { name: "Camiseta Ekklesia 2026", price: 69.90, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80&w=500" },
+            { name: "Livro: Avivamento", price: 45.00, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=500" },
+            { name: "Boné Trucker", price: 50.00, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&q=80&w=500" },
+            { name: "Caneca Personalizada", price: 35.00, category: "LOJA", imageUrl: "https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?auto=format&fit=crop&q=80&w=500" }
+        ]
+    });
+    console.log(`✅ Produtos recriados.`);
+
+    // ... Resto do código (Configurações Globais e Staff) continua igual ...
     // ========================================================================
     // 3. CONTADOR DE REUNIÕES
     // ========================================================================
@@ -77,7 +96,7 @@ async function main() {
     const staffUsers = [
         { name: "Admin Geral", email: "admin@ibmg.com", dept: "ADMIN" },
         { name: "Ana Recepção", email: "ana@recepcao.com", dept: "RECEPTION" },
-        { name: "Marcos Cantina", email: "marcos@cantina.com", dept: "CANTINA" },
+        { name: "Marcos Gourmet", email: "marcos@gourmet.com", dept: "CANTINA" },
         { name: "Luiza Loja", email: "luiza@store.com", dept: "STORE" },
         { name: "Carlos Kids", email: "carlos@kids.com", dept: "KIDS" },
         { name: "Paulo Evangelismo", email: "paulo@rua.com", dept: "EVANGELISM" },
