@@ -1,127 +1,134 @@
 import { Router } from 'express';
-import { prisma } from '../../lib/prisma'; // Ajuste o caminho conforme sua estrutura
+import { prisma } from '../../lib/prisma';
+import { MercadoPagoConfig, Payment } from 'mercadopago';
 
 const router = Router();
 
+// --- CONFIGURAÇÃO DO MERCADO PAGO ---
+// ⚠️ COLOQUE SEU ACCESS TOKEN ABAIXO
+const client = new MercadoPagoConfig({ accessToken: 'SEU_ACCESS_TOKEN_AQUI' });
+const payment = new Payment(client);
+
 // ============================================================================
-// 1. CRIAR PEDIDO (Cliente clica em "Finalizar")
+// 1. CRIAR PEDIDO + GERAR PIX AUTOMÁTICO
 // ============================================================================
 router.post('/orders', async (req, res) => {
     try {
-        const { buyerName, items, total, buyerType } = req.body;
+        const { name, phone, age, email, church, total, items } = req.body;
 
-        // Gera um código curto aleatório (Ex: "A1B2")
+        let parsedItems = [];
+        try { parsedItems = JSON.parse(items || '[]'); } catch (e) { }
+
+        // 1. Criar/Atualizar Cliente
+        const userEmail = email || `${phone.replace(/\D/g, '')}@noemail.com`;
+        const person = await prisma.person.upsert({
+            where: { email: userEmail },
+            update: { name, phone, church, age: Number(age) },
+            create: { name, email: userEmail, phone, church, age: Number(age), type: 'VISITOR' }
+        });
+
+        // 2. Gerar Código Único
         const orderCode = Math.random().toString(36).substring(2, 6).toUpperCase();
 
-        // Cria a Venda com status PENDING
+        // 3. Salvar Venda como PENDING
         const sale = await prisma.sale.create({
             data: {
-                buyerName: buyerName || "Visitante",
-                buyerType: buyerType || 'VISITOR',
+                buyerName: name,
+                buyerType: 'VISITOR',
+                personId: person.id,
                 total: Number(total),
-                paymentMethod: 'PENDING', // Ainda não pagou
-                status: 'PENDING',        // Pedido pendente de preparo/pagamento
-                orderCode: orderCode,     // Código para chamar no balcão
+                paymentMethod: 'PIX',
+                status: 'PENDING',
+                orderCode: orderCode,
                 items: {
-                    create: items.map((i: any) => ({
-                        productId: i.productId,
-                        quantity: i.quantity,
-                        price: Number(i.price) // Salva o preço da hora da compra
+                    create: parsedItems.map((i: any) => ({
+                        productId: i.productId, quantity: Number(i.quantity), price: Number(i.price)
                     }))
                 }
             }
         });
 
-        console.log(`✅ Novo pedido criado: #${orderCode} - ${buyerName}`);
-        res.json(sale);
-
-    } catch (error) {
-        console.error("Erro ao criar pedido:", error);
-        res.status(500).json({ error: "Erro interno ao processar pedido." });
-    }
-});
-
-// ============================================================================
-// 2. LISTAR PEDIDOS PENDENTES (Para o Staff/Cozinha)
-// ============================================================================
-router.get('/orders/pending', async (req, res) => {
-    try {
-        const orders = await prisma.sale.findMany({
-            where: {
-                status: { in: ['PENDING', 'PAID'] } // Mostra o que precisa ser feito
-            },
-            include: {
-                items: {
-                    include: { product: true }
+        // 4. CHAMAR MERCADO PAGO
+        const mpResponse = await payment.create({
+            body: {
+                transaction_amount: Number(total),
+                description: `Pedido #${orderCode} - Loja Psalms`,
+                payment_method_id: 'pix',
+                payer: {
+                    email: userEmail,
+                    first_name: name.split(' ')[0],
+                    last_name: name.split(' ').slice(1).join(' ') || 'Cliente'
+                },
+                metadata: {
+                    order_code: orderCode,
+                    sale_id: sale.id
                 }
-            },
-            orderBy: { timestamp: 'asc' } // Mais antigos primeiro
-        });
-
-        res.json(orders);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Erro ao buscar pedidos." });
-    }
-});
-
-// ============================================================================
-// 3. PAGAR PEDIDO (Staff recebe o dinheiro/PIX)
-// ============================================================================
-router.post('/orders/pay', async (req, res) => {
-    try {
-        const { orderCode } = req.body;
-
-        if (!orderCode) return res.status(400).json({ error: "Código obrigatório" });
-
-        await prisma.sale.updateMany({
-            where: { orderCode: orderCode },
-            data: {
-                status: 'PAID',         // Agora está pago
-                paymentMethod: 'PIX'    // Ou DINHEIRO (Pode vir do body se quiser)
             }
         });
 
-        res.json({ success: true, message: "Pedido pago com sucesso." });
+        const pixData = {
+            qrCode: mpResponse.point_of_interaction?.transaction_data?.qr_code_base64,
+            copyPaste: mpResponse.point_of_interaction?.transaction_data?.qr_code,
+            paymentId: mpResponse.id
+        };
+
+        res.json({ sale, pixData });
+
     } catch (error) {
-        res.status(500).json({ error: "Erro ao atualizar pedido." });
+        console.error("Erro MP/Backend:", error);
+        res.status(500).json({ error: "Erro ao gerar PIX." });
     }
 });
 
 // ============================================================================
-// 4. ENTREGAR PEDIDO (Sai da tela da cozinha)
+// 2. CHECKAGEM DE PAGAMENTO (POLLING)
 // ============================================================================
-router.post('/orders/deliver', async (req, res) => {
+router.post('/orders/check-payment', async (req, res) => {
     try {
-        const { orderCode } = req.body;
+        const { paymentId, saleId } = req.body;
+        const mpCheck = await payment.get({ id: paymentId });
 
-        await prisma.sale.updateMany({
-            where: { orderCode: orderCode },
-            data: { status: 'DELIVERED' } // Finalizado
-        });
-
-        res.json({ success: true });
+        if (mpCheck.status === 'approved') {
+            const updated = await prisma.sale.update({
+                where: { id: saleId },
+                data: { status: 'PAID' }
+            });
+            return res.json({ status: 'PAID', orderCode: updated.orderCode });
+        }
+        res.json({ status: 'PENDING' });
     } catch (error) {
-        res.status(500).json({ error: "Erro ao entregar pedido." });
+        res.status(500).json({ error: "Erro cheque MP" });
     }
 });
 
 // ============================================================================
-// 5. REJEITAR/CANCELAR PEDIDO
+// 3. ROTAS DE STAFF (LISTAGEM E AÇÕES)
 // ============================================================================
+router.get('/orders/pending', async (req, res) => {
+    const orders = await prisma.sale.findMany({
+        where: { status: { in: ['PENDING', 'ANALYSIS', 'PAID'] } },
+        include: { items: { include: { product: true } }, person: true },
+        orderBy: { timestamp: 'desc' }
+    });
+    res.json(orders);
+});
+
+// Aprovar manual (caso precise)
+router.post('/orders/pay', async (req, res) => {
+    await prisma.sale.updateMany({ where: { orderCode: req.body.orderCode }, data: { status: 'PAID' } });
+    res.json({ success: true });
+});
+
+// Rejeitar/Cancelar
 router.post('/orders/reject', async (req, res) => {
-    try {
-        const { orderCode } = req.body;
+    await prisma.sale.updateMany({ where: { orderCode: req.body.orderCode }, data: { status: 'CANCELLED' } });
+    res.json({ success: true });
+});
 
-        await prisma.sale.updateMany({
-            where: { orderCode: orderCode },
-            data: { status: 'CANCELLED' }
-        });
-
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: "Erro ao cancelar pedido." });
-    }
+// Entregar (Retirada)
+router.post('/orders/deliver', async (req, res) => {
+    await prisma.sale.updateMany({ where: { orderCode: req.body.orderCode }, data: { status: 'DELIVERED' } });
+    res.json({ success: true });
 });
 
 export default router;

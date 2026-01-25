@@ -10,34 +10,40 @@ datasource db {
 }
 
 // ============================================================================
-// 1. PESSOAS E ACESSOS
+// 1. PESSOAS (LEADS, MEMBROS E STAFF)
 // ============================================================================
 
 model Person {
   id              String     @id @default(uuid())
   name            String
-  email           String?    @unique // Obrigatório para Staff logar
+  email           String?    @unique // Identificador principal
   phone           String?
   age             Int?
   gender          String?    // 'M' ou 'F'
   
   type            PersonType @default(VISITOR)
   role            Role       @default(PARTICIPANT)
-   
-  // Define qual tela o Staff vê (KIDS, CANTINA, RECEPTION, etc)
+  
+  // Apenas para STAFF: define qual tela ele vê (STORE, KIDS, RECEPTION)
   department      String?    
-   
+  
   church          String?
-  marketingSource String?    // Ex: "Instagram", "Decisão: Aceitou Jesus"
-   
+  marketingSource String?    
+    
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
   movements       Movement[]
-  orders          Order[]    // Relacionamento com pedidos da pré-venda/online
+  
+  // Relacionamento com as Vendas (Antigo Orders)
+  sales           Sale[]     
 
   @@map("people")
 }
+
+// ============================================================================
+// 2. LOCAIS E MOVIMENTAÇÃO (RECEPÇÃO, KIDS, ETC)
+// ============================================================================
 
 model Checkpoint {
   id            String             @id @default(uuid())
@@ -51,10 +57,11 @@ model Checkpoint {
   @@map("checkpoints")
 }
 
+// Registro automático (ex: leitura de QR Code na portaria)
 model Movement {
   id           String     @id @default(uuid())
   timestamp    DateTime   @default(now())
-   
+  
   personId     String
   person       Person     @relation(fields: [personId], references: [id])
   checkpointId String
@@ -63,6 +70,7 @@ model Movement {
   @@map("movements")
 }
 
+// Registro manual (ex: Staff clicando no botão "+1 Homem")
 model ManualEntry {
   id              String     @id @default(uuid())
   timestamp       DateTime   @default(now())
@@ -72,7 +80,7 @@ model ManualEntry {
   gender          String?
   ageGroup        String?
   church          String?
-  marketingSource String?    // Tags como "VIDA_SALVA", "CURA"
+  marketingSource String?    
 
   checkpointId    String
   checkpoint      Checkpoint @relation(fields: [checkpointId], references: [id])
@@ -81,18 +89,20 @@ model ManualEntry {
 }
 
 // ============================================================================
-// 2. PRODUTOS E VENDAS (POS / LOJA FÍSICA)
+// 3. LOJA, PRODUTOS E VENDAS UNIFICADAS
 // ============================================================================
 
 model Product {
-  id          String      @id @default(uuid())
+  id          String   @id @default(uuid())
   name        String
-  price       Decimal     @db.Decimal(10, 2)
-  category    String      // 'CANTINA' ou 'LOJA'
-  imageUrl    String?     // Foto do produto
-   
+  description String?  // Novo: Para detalhes no modal
+  price       Decimal  @db.Decimal(10, 2)
+  category    String   // 'CANTINA' (Visualização) ou 'LOJA' (Venda)
+  
+  imageUrl    String?  // Imagem principal (Capa)
+  images      String[] // Novo: Array de URLs para o Carrossel
+  
   saleItems   SaleItem[]
-  orderItems  OrderItem[]
 
   @@map("products")
 }
@@ -100,20 +110,24 @@ model Product {
 model Sale {
   id            String   @id @default(uuid())
   timestamp     DateTime @default(now())
-  total         Decimal  @db.Decimal(10, 2)
-  paymentMethod String   // PIX, DINHEIRO, CARTAO, PENDING
   
-  // --- CAMPOS NOVOS NECESSÁRIOS PARA O CHECKOUT ---
-  buyerName     String?  // <--- O CAMPO QUE ESTAVA FALTANDO
-  orderCode     String?  // Para o código curto (A1B2)
-  status        String   @default("COMPLETED") // PENDING, PAID, DELIVERED
-  // ------------------------------------------------
-
+  total         Decimal  @db.Decimal(10, 2)
+  paymentMethod String   
+  status        String   @default("PENDING") 
+  
+  orderCode     String?  
+  proofUrl      String?  
+  
+  buyerName     String?  
   buyerType     PersonType @default(VISITOR)
-  buyerGender   String     @default("M")
+  
+  // 👇 ADICIONE ESTE CAMPO DE VOLTA 👇
+  buyerGender   String?    @default("M") 
+  // ----------------------------------
 
-  // Tornamos o Checkpoint opcional (?) pois o pedido online 
-  // pode ser criado sem estar fisicamente num balcão ainda
+  personId      String?
+  person        Person?     @relation(fields: [personId], references: [id])
+
   checkpointId  String?    
   checkpoint    Checkpoint? @relation(fields: [checkpointId], references: [id])
   
@@ -129,67 +143,37 @@ model SaleItem {
   productId String
   product   Product @relation(fields: [productId], references: [id])
   quantity  Int
-  price     Decimal @db.Decimal(10, 2) // Preço congelado no momento da venda
+  price     Decimal @db.Decimal(10, 2)
 
   @@map("sale_items")
 }
-model Order {
-  id          String      @id @default(uuid())
-  orderCode   String      @unique // Código curto ex: "A1B2"
-   
-  // PersonId é OBRIGATÓRIO (Checkout identificado)
-  personId    String      
-  person      Person      @relation(fields: [personId], references: [id])
-   
-  // Cache de dados do comprador para histórico
-  buyerName   String 
-  buyerPhone  String
 
-  total       Decimal     @db.Decimal(10, 2)
-  status      OrderStatus @default(PENDING) 
-   
-  // Comprovante de Pagamento
-  proofUrl    String?     
-  
-  items       OrderItem[]
-  
-  createdAt   DateTime    @default(now())
-  paidAt      DateTime?
-  deliveredAt DateTime?
-
-  @@map("orders")
-}
-
-model OrderItem {
-  id        String  @id @default(uuid())
-  orderId   String
-  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-  quantity  Int
-
-  @@map("order_items")
-}
+// ============================================================================
+// 4. CONFIGURAÇÕES E ADMIN
+// ============================================================================
 
 model Meeting {
   id        String   @id @default(uuid())
-  title     String   // Ex: "Alinhamento Kids", "Reunião Geral"
+  title     String   
   date      DateTime 
-  type      String   // 'AGENDADA' ou 'REALIZADA'
-  notes     String?  // Ata
-   
-  createdBy String?  // Nome do Staff
+  type      String   
+  notes     String?  
+  createdBy String?  
   createdAt DateTime @default(now())
 
   @@map("meetings")
 }
 
 model GlobalConfig {
-  key   String @id @unique // Ex: "MEETING_COUNT"
+  key   String @id @unique 
   value String
-   
+  
   @@map("global_config")
 }
+
+// ============================================================================
+// ENUMS
+// ============================================================================
 
 enum PersonType {
   MEMBER
@@ -211,11 +195,4 @@ enum CheckpointCategory {
   EVANGELISM
   CONSOLIDATION
   STORE
-}
-
-enum OrderStatus {
-  PENDING
-  PAID
-  DELIVERED
-  CANCELED
 }

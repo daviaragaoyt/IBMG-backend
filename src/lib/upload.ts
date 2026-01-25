@@ -2,20 +2,22 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
-// Configura pasta fora do src
-const uploadDir = path.join(__dirname, '../../uploads');
+// Define onde salvar (pasta 'uploads' na raiz do projeto)
+export const UPLOAD_DIR = path.resolve(__dirname, '..', '..', 'uploads');
 
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+// Cria a pasta se não existir
+if (!fs.existsSync(UPLOAD_DIR)) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
+    destination: UPLOAD_DIR,
     filename: (req, file, cb) => {
+
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
+        const ext = path.extname(file.originalname);
+        cb(null, `proof-${uniqueSuffix}${ext}`);
     }
 });
 
 export const upload = multer({ storage });
-export const UPLOAD_DIR = uploadDir;
