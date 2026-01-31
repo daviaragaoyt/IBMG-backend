@@ -1,134 +1,332 @@
 import { Router } from 'express';
+import axios from 'axios';
 import { prisma } from '../../lib/prisma';
-import { MercadoPagoConfig, Payment } from 'mercadopago';
 
 const router = Router();
 
-// --- CONFIGURAÇÃO DO MERCADO PAGO ---
-// ⚠️ COLOQUE SEU ACCESS TOKEN ABAIXO
-const client = new MercadoPagoConfig({ accessToken: 'SEU_ACCESS_TOKEN_AQUI' });
-const payment = new Payment(client);
+/* ======================================================
+   CONFIG ABACATEPAY
+====================================================== */
 
-// ============================================================================
-// 1. CRIAR PEDIDO + GERAR PIX AUTOMÁTICO
-// ============================================================================
-router.post('/orders', async (req, res) => {
+const ABACATE_TOKEN = process.env.PSALMSKEY;
+
+if (!ABACATE_TOKEN) {
+    console.error('❌ PSALMSKEY não configurada');
+}
+
+const gatewayApi = axios.create({
+    baseURL: 'https://api.abacatepay.com/v1',
+    headers: {
+        Authorization: `Bearer ${ABACATE_TOKEN}`,
+        'Content-Type': 'application/json'
+    },
+    timeout: 15000
+});
+
+/* ======================================================
+   HELPERS
+====================================================== */
+
+function isValidCPF(cpf: string) {
+    cpf = cpf.replace(/\D/g, '');
+    if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false;
+
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += Number(cpf[i]) * (10 - i);
+    let rest = (sum * 10) % 11;
+    if (rest === 10) rest = 0;
+    if (rest !== Number(cpf[9])) return false;
+
+    sum = 0;
+    for (let i = 0; i < 10; i++) sum += Number(cpf[i]) * (11 - i);
+    rest = (sum * 10) % 11;
+    if (rest === 10) rest = 0;
+
+    return rest === Number(cpf[10]);
+}
+
+const normalizeCPF = (cpf: string) => cpf.replace(/\D/g, '');
+
+const formatCPF = (cpf: string) =>
+    cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+
+/* ======================================================
+   WEBHOOK (ABACATEPAY → BACKEND)
+====================================================== */
+
+router.post('/webhook/abacatepay', async (req, res) => {
     try {
-        const { name, phone, age, email, church, total, items } = req.body;
+        const { event, data } = req.body;
 
-        let parsedItems = [];
-        try { parsedItems = JSON.parse(items || '[]'); } catch (e) { }
+        console.log('🥑 Webhook recebido:', event, data?.id, data?.status);
 
-        // 1. Criar/Atualizar Cliente
-        const userEmail = email || `${phone.replace(/\D/g, '')}@noemail.com`;
-        const person = await prisma.person.upsert({
-            where: { email: userEmail },
-            update: { name, phone, church, age: Number(age) },
-            create: { name, email: userEmail, phone, church, age: Number(age), type: 'VISITOR' }
+        if (event !== 'billing.paid' && data?.status !== 'PAID') {
+            return res.sendStatus(200);
+        }
+
+        const sale = await prisma.sale.findUnique({
+            where: { externalId: data.id }
         });
 
-        // 2. Gerar Código Único
-        const orderCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+        if (!sale) return res.sendStatus(200);
+        if (sale.status === 'PAID') return res.sendStatus(200);
 
-        // 3. Salvar Venda como PENDING
+        await prisma.sale.update({
+            where: { id: sale.id },
+            data: { status: 'PAID' }
+        });
+
+        console.log(`✅ Venda ${sale.orderCode} confirmada via webhook`);
+        res.sendStatus(200);
+    } catch (err) {
+        console.error('❌ Erro webhook:', err);
+        res.sendStatus(500);
+    }
+});
+
+/* ======================================================
+   CRIAR PEDIDO / GERAR PIX
+====================================================== */
+
+router.post('/', async (req, res) => {
+    try {
+        const { name, email, phone, cpf, age, church, items } = req.body;
+
+        if (!name || !email || !cpf || !phone) {
+            return res.status(400).json({ error: 'Dados obrigatórios ausentes.' });
+        }
+
+        const cleanCPF = normalizeCPF(cpf);
+        const cleanPhone = String(phone).replace(/\D/g, '');
+
+        if (!isValidCPF(cleanCPF)) {
+            return res.status(400).json({ error: 'CPF inválido.' });
+        }
+
+        const parsedItems =
+            typeof items === 'string' ? JSON.parse(items) : items;
+
+        if (!Array.isArray(parsedItems) || !parsedItems.length) {
+            return res.status(400).json({ error: 'Carrinho vazio.' });
+        }
+
+        /* ============================
+           BUSCA PRODUTOS
+        ============================ */
+
+        const productIds = parsedItems.map(i => i.productId);
+
+        const products = await prisma.product.findMany({
+            where: { id: { in: productIds } }
+        });
+
+        let total = 0;
+        const finalItems: any[] = [];
+
+        for (const item of parsedItems) {
+            const product = products.find(p => p.id === item.productId);
+            if (!product) continue;
+
+            const quantity = Math.max(1, Number(item.quantity));
+            const price = Number(product.price);
+            total += price * quantity;
+
+            finalItems.push({
+                productId: product.id,
+                name: product.name,
+                quantity,
+                price: product.price
+            });
+        }
+
+        if (!finalItems.length) {
+            return res.status(400).json({ error: 'Produtos inválidos.' });
+        }
+
+        /* ============================
+           UPSERT PERSON
+        ============================ */
+
+        const person = await prisma.person.upsert({
+            where: { email },
+            update: {
+                name,
+                phone: cleanPhone,
+                age: age ? Number(age) : undefined,
+                church
+            },
+            create: {
+                name,
+                email,
+                phone: cleanPhone,
+                age: age ? Number(age) : null,
+                church,
+                type: 'VISITOR'
+            }
+        });
+
+        /* ============================
+           CUSTOMER ABACATEPAY
+        ============================ */
+
+        let customerId = '';
+
+        try {
+            const resCustomer = await gatewayApi.post('/customer/create', {
+                name,
+                email,
+                cellphone: cleanPhone,
+                taxId: cleanCPF
+            });
+
+            customerId = resCustomer.data?.data?.id;
+        } catch {
+            const list = await gatewayApi.get('/customer/list', {
+                params: { email }
+            });
+
+            const found = (list.data?.data || []).find(
+                (c: any) => c.email === email
+            );
+
+            if (found) customerId = found.id;
+        }
+
+        if (!customerId) {
+            return res
+                .status(400)
+                .json({ error: 'Erro ao criar cliente de pagamento.' });
+        }
+
+        /* ============================
+           CRIA BILLING (PIX)
+        ============================ */
+
+        const billing = await gatewayApi.post('/billing/create', {
+            frequency: 'ONE_TIME',
+            methods: ['PIX'],
+            customerId,
+            products: finalItems.map(i => ({
+                externalId: i.productId,
+                name: i.name,
+                quantity: i.quantity,
+                price: Math.round(i.price * 100)
+            })),
+            returnUrl: 'https://ibmg-three.vercel.app/ekklesia',
+            completionUrl: 'https://ibmg-three.vercel.app/ekklesia'
+        });
+
+        const billingData = billing.data?.data;
+
+        if (!billingData?.id) {
+            return res.status(500).json({ error: 'Erro ao gerar PIX.' });
+        }
+
+        /* ============================
+           SALVA VENDA
+        ============================ */
+
+        const orderCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
         const sale = await prisma.sale.create({
             data: {
-                buyerName: name,
-                buyerType: 'VISITOR',
-                personId: person.id,
-                total: Number(total),
-                paymentMethod: 'PIX',
+                orderCode,
+                externalId: billingData.id,
+                total,
                 status: 'PENDING',
-                orderCode: orderCode,
+                paymentMethod: 'PIX',
+                buyerName: name,
+                buyerType: person.type,
+                buyerGender: person.gender || 'U',
+                personId: person.id,
                 items: {
-                    create: parsedItems.map((i: any) => ({
-                        productId: i.productId, quantity: Number(i.quantity), price: Number(i.price)
+                    create: finalItems.map(i => ({
+                        productId: i.productId,
+                        quantity: i.quantity,
+                        price: i.price
                     }))
                 }
             }
         });
 
-        // 4. CHAMAR MERCADO PAGO
-        const mpResponse = await payment.create({
-            body: {
-                transaction_amount: Number(total),
-                description: `Pedido #${orderCode} - Loja Psalms`,
-                payment_method_id: 'pix',
-                payer: {
-                    email: userEmail,
-                    first_name: name.split(' ')[0],
-                    last_name: name.split(' ').slice(1).join(' ') || 'Cliente'
-                },
-                metadata: {
-                    order_code: orderCode,
-                    sale_id: sale.id
-                }
+        res.json({
+            sale,
+            pixData: {
+                paymentId: billingData.id,
+                copyPaste: billingData.pix?.code || billingData.url
             }
         });
-
-        const pixData = {
-            qrCode: mpResponse.point_of_interaction?.transaction_data?.qr_code_base64,
-            copyPaste: mpResponse.point_of_interaction?.transaction_data?.qr_code,
-            paymentId: mpResponse.id
-        };
-
-        res.json({ sale, pixData });
-
-    } catch (error) {
-        console.error("Erro MP/Backend:", error);
-        res.status(500).json({ error: "Erro ao gerar PIX." });
+    } catch (err: any) {
+        console.error('❌ Erro criar pedido:', err.message);
+        res.status(500).json({ error: 'Erro interno.' });
     }
 });
 
-// ============================================================================
-// 2. CHECKAGEM DE PAGAMENTO (POLLING)
-// ============================================================================
-router.post('/orders/check-payment', async (req, res) => {
+/* ======================================================
+   CHECK STATUS (POLLING)
+====================================================== */
+
+router.get('/check-status/:paymentId', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+
     try {
-        const { paymentId, saleId } = req.body;
-        const mpCheck = await payment.get({ id: paymentId });
+        const { paymentId } = req.params;
 
-        if (mpCheck.status === 'approved') {
-            const updated = await prisma.sale.update({
-                where: { id: saleId },
-                data: { status: 'PAID' }
+        const response = await gatewayApi.get('/billing/list', {
+            params: { id: paymentId }
+        });
+
+        const list = response.data?.data || response.data;
+        const bill = Array.isArray(list)
+            ? list.find((b: any) => b.id === paymentId)
+            : null;
+
+        if (!bill) return res.json({ status: 'PENDING' });
+
+        if (bill.status === 'PAID' || bill.status === 'COMPLETED') {
+            const sale = await prisma.sale.findUnique({
+                where: { externalId: paymentId }
             });
-            return res.json({ status: 'PAID', orderCode: updated.orderCode });
+
+            if (sale && sale.status !== 'PAID') {
+                await prisma.sale.update({
+                    where: { id: sale.id },
+                    data: { status: 'PAID' }
+                });
+            }
+
+            return res.json({
+                status: 'PAID',
+                orderCode: sale?.orderCode
+            });
         }
-        res.json({ status: 'PENDING' });
-    } catch (error) {
-        res.status(500).json({ error: "Erro cheque MP" });
+
+        return res.json({ status: 'PENDING' });
+    } catch (err: any) {
+        console.error('❌ check-status error:', err.message);
+        return res.json({ status: 'PENDING' });
     }
 });
 
-// ============================================================================
-// 3. ROTAS DE STAFF (LISTAGEM E AÇÕES)
-// ============================================================================
-router.get('/orders/pending', async (req, res) => {
-    const orders = await prisma.sale.findMany({
-        where: { status: { in: ['PENDING', 'ANALYSIS', 'PAID'] } },
-        include: { items: { include: { product: true } }, person: true },
-        orderBy: { timestamp: 'desc' }
-    });
-    res.json(orders);
-});
+/* ======================================================
+   LISTAGEM (ADMIN / DEBUG)
+====================================================== */
 
-// Aprovar manual (caso precise)
-router.post('/orders/pay', async (req, res) => {
-    await prisma.sale.updateMany({ where: { orderCode: req.body.orderCode }, data: { status: 'PAID' } });
-    res.json({ success: true });
-});
+router.get('/pending', async (_, res) => {
+    try {
+        const sales = await prisma.sale.findMany({
+            where: { status: { in: ['PENDING', 'PAID'] } },
+            include: {
+                items: { include: { product: true } },
+                person: true
+            },
+            orderBy: { timestamp: 'desc' }
+        });
 
-// Rejeitar/Cancelar
-router.post('/orders/reject', async (req, res) => {
-    await prisma.sale.updateMany({ where: { orderCode: req.body.orderCode }, data: { status: 'CANCELLED' } });
-    res.json({ success: true });
-});
-
-// Entregar (Retirada)
-router.post('/orders/deliver', async (req, res) => {
-    await prisma.sale.updateMany({ where: { orderCode: req.body.orderCode }, data: { status: 'DELIVERED' } });
-    res.json({ success: true });
+        res.json(sales);
+    } catch {
+        res.status(500).json({ error: 'Erro ao listar pedidos.' });
+    }
 });
 
 export default router;

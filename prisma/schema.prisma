@@ -118,13 +118,15 @@ model Sale {
   orderCode     String?  
   proofUrl      String?  
   
+  // ADICIONE ESTA LINHA AQUI 👇
+  externalId    String?  @unique
+  // -------------------------
+
   buyerName     String?  
   buyerType     PersonType @default(VISITOR)
   
-  // 👇 ADICIONE ESTE CAMPO DE VOLTA 👇
   buyerGender   String?    @default("M") 
-  // ----------------------------------
-
+  
   personId      String?
   person        Person?     @relation(fields: [personId], references: [id])
 

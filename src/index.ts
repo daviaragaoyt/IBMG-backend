@@ -1,4 +1,4 @@
-// --- 1. CONFIGURAÇÃO ---
+// src/server.ts
 process.env.TZ = 'America/Sao_Paulo';
 
 import express from 'express';
@@ -7,50 +7,44 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { UPLOAD_DIR } from './lib/upload';
 
-// --- IMPORTAÇÃO DOS MÓDULOS ---
+// IMPORTANTE: Importar os Módulos das Rotas
 import AuthRoutes from './modules/Auth';
 import OperationsRoutes from './modules/Operations';
-import ProductsRoutes from './modules/Products';
-// import SalesRoutes from './modules/Sales';
-// import CheckoutRoutes from './modules/Checkout';
 import MeetingsRoutes from './modules/Meetings';
 import DashboardRoutes from './modules/Dashboard';
-
-// 👇 1. ADICIONE ESTA IMPORTAÇÃO (Se não tiver, dá erro)
+// 👇 Estes são os que estavam faltando ou mal configurados
+import ProductsRoutes from './modules/Products';
 import OrdersRoutes from './modules/Orders';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// --- MIDDLEWARES ---
-app.use(cors({ origin: '*' }));
-// IMPORTANTE: crossOriginResourcePolicy: false permite que o frontend carregue as imagens
+// Configurações de Segurança e Logs
+app.use(cors({ origin: '*' })); // Permite acesso do Frontend
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
 
-// Permite acessar as fotos em http://localhost:3001/uploads/nome-do-arquivo.jpg
+// Arquivos Estáticos (Imagens)
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-// --- ROTAS (MODULARES) ---
+// === REGISTRO DE ROTAS (AQUI É A CORREÇÃO DO 404) ===
 app.use(AuthRoutes);
 app.use(OperationsRoutes);
-app.use(ProductsRoutes);
-// app.use(SalesRoutes);
-// app.use(CheckoutRoutes);
 app.use(MeetingsRoutes);
 app.use(DashboardRoutes);
 
-// 👇 2. REGISTRE A ROTA AQUI (Onde acontece o erro 404)
-app.use(OrdersRoutes);
+// Rotas da Loja e Pagamento
+app.use('/products', ProductsRoutes); // Corrige o erro GET /products 404
+app.use('/orders', OrdersRoutes);     // Corrige o erro POST /orders 500 (agora aponta pro lugar certo)
 
-// Rota Base
+// Rota de Teste (Health Check)
 app.get('/', (req, res) => {
-  res.json({ status: 'online', timestamp: new Date() });
+  res.json({ status: 'API Online 🚀', system: 'Ekklesia v2.0' });
 });
 
 if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => console.log(`🔥 API Modular rodando na porta ${PORT}`));
+  app.listen(PORT, () => console.log(`🔥 Servidor rodando na porta ${PORT}`));
 }
 
 export default app;

@@ -51,32 +51,32 @@ async function main() {
     await prisma.product.createMany({
         data: [
             // --- Espaço Gourmet (Apenas Visualização) ---
-            {
-                name: "Água sem Gás",
-                price: 3.00,
-                category: "CANTINA",
-                imageUrl: "https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&q=80&w=500",
-                images: imgs("https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&q=80&w=500")
-            },
-            {
-                name: "Refrigerante Lata",
-                price: 6.00,
-                category: "CANTINA",
-                imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&q=80&w=500",
-                images: imgs("https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&q=80&w=500")
-            },
-            {
-                name: "Salgado Assado",
-                price: 8.00,
-                category: "CANTINA",
-                imageUrl: "https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&q=80&w=500",
-                images: imgs("https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&q=80&w=500")
-            },
+            // {
+            //     name: "Água sem Gás",
+            //     price: 3.00,
+            //     category: "CANTINA",
+            //     imageUrl: "https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&q=80&w=500",
+            //     images: imgs("https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&q=80&w=500")
+            // },
+            // {
+            //     name: "Refrigerante Lata",
+            //     price: 6.00,
+            //     category: "CANTINA",
+            //     imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&q=80&w=500",
+            //     images: imgs("https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&q=80&w=500")
+            // },
+            // {
+            //     name: "Salgado Assado",
+            //     price: 8.00,
+            //     category: "CANTINA",
+            //     imageUrl: "https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&q=80&w=500",
+            //     images: imgs("https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&q=80&w=500")
+            // },
 
             // --- Loja Psalms (Venda Ativa) ---
             {
                 name: "Camiseta Ekklesia 2026",
-                price: 69.90,
+                price: 1.00,
                 category: "LOJA",
                 description: "Camiseta oficial do evento. 100% Algodão.",
                 imageUrl: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80&w=500",
@@ -88,18 +88,26 @@ async function main() {
             },
             {
                 name: "Livro: Avivamento",
-                price: 45.00,
+                price: 1.00,
                 category: "LOJA",
                 description: "Livro exclusivo sobre o tema do ano.",
                 imageUrl: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=500",
-                images: imgs("https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=500")
+                images: [
+                    "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80&w=500", // Preta
+                    "https://images.unsplash.com/photo-1618354691373-d851c5c3a990?auto=format&fit=crop&q=80&w=500", // Detalhe
+                    "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?auto=format&fit=crop&q=80&w=500"  // Modelo
+                ]
             },
             {
                 name: "Boné Trucker",
-                price: 50.00,
+                price: 1.00,
                 category: "LOJA",
                 imageUrl: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&q=80&w=500",
-                images: imgs("https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&q=80&w=500")
+                images: [
+                    "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80&w=500", // Preta
+                    "https://images.unsplash.com/photo-1618354691373-d851c5c3a990?auto=format&fit=crop&q=80&w=500", // Detalhe
+                    "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?auto=format&fit=crop&q=80&w=500"  // Modelo
+                ]
             }
         ]
     });
