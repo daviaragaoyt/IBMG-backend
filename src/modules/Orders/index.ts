@@ -4,10 +4,6 @@ import { prisma } from '../../lib/prisma';
 
 const router = Router();
 
-/* ======================================================
-   CONFIG ABACATEPAY
-====================================================== */
-
 const ABACATE_TOKEN = process.env.PSALMSKEY;
 
 if (!ABACATE_TOKEN) {
@@ -22,10 +18,6 @@ const gatewayApi = axios.create({
     },
     timeout: 15000
 });
-
-/* ======================================================
-   HELPERS
-====================================================== */
 
 function isValidCPF(cpf: string) {
     cpf = cpf.replace(/\D/g, '');
@@ -47,43 +39,55 @@ function isValidCPF(cpf: string) {
 
 const normalizeCPF = (cpf: string) => cpf.replace(/\D/g, '');
 
-/* ======================================================
-   WEBHOOK (ABACATEPAY → BACKEND)
-====================================================== */
-
 router.post('/webhook/abacatepay', async (req, res) => {
     try {
         const { event, data } = req.body;
 
-        console.log('🥑 Webhook recebido:', event, data?.id, data?.status);
+        // 🔍 LOG para ver o que chegou (Ajuda a debugar)
+        console.log('🥑 Webhook cru:', JSON.stringify(req.body, null, 2));
 
-        if (event !== 'billing.paid' && data?.status !== 'PAID') {
+        if (event !== 'billing.paid') {
             return res.sendStatus(200);
         }
 
+        // 🔥 A CORREÇÃO MÁGICA ESTÁ AQUI 👇
+        // O ID pode vir direto ou dentro de 'billing', dependendo da versão da API
+        const paymentId = data?.billing?.id || data?.id;
+
+        if (!paymentId) {
+            console.error('❌ ID do pagamento não encontrado no webhook.');
+            return res.sendStatus(200); // Retorna 200 pro Abacate não ficar tentando de novo
+        }
+
+        console.log(`🔎 Buscando venda com ID: ${paymentId}`);
+
         const sale = await prisma.sale.findUnique({
-            where: { externalId: data.id }
+            where: { externalId: paymentId } // Usa o ID correto agora
         });
 
-        if (!sale) return res.sendStatus(200);
-        if (sale.status === 'PAID') return res.sendStatus(200);
+        if (!sale) {
+            console.error(`⚠️ Venda não encontrada para o ID: ${paymentId}`);
+            return res.sendStatus(200);
+        }
+
+        if (sale.status === 'PAID') {
+            console.log('✅ Venda já estava paga.');
+            return res.sendStatus(200);
+        }
 
         await prisma.sale.update({
             where: { id: sale.id },
             data: { status: 'PAID' }
         });
 
-        console.log(`✅ Venda ${sale.orderCode} confirmada via webhook`);
+        console.log(`🚀 SUCESSO! Venda ${sale.orderCode} atualizada para PAID via Webhook.`);
         res.sendStatus(200);
-    } catch (err) {
-        console.error('❌ Erro webhook:', err);
-        res.sendStatus(500);
+
+    } catch (err: any) {
+        console.error('❌ Erro crítico no webhook:', err.message);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
-
-/* ======================================================
-   CRIAR PEDIDO / GERAR PIX (CORRIGIDO ERRO 500)
-====================================================== */
 
 router.post('/', async (req, res) => {
     try {
@@ -245,9 +249,6 @@ router.post('/', async (req, res) => {
     }
 });
 
-/* ======================================================
-   CHECK STATUS (POLLING)
-====================================================== */
 
 router.get('/check-status/:paymentId', async (req, res) => {
     // 1. Mata o Cache para garantir dados frescos
@@ -266,10 +267,6 @@ router.get('/check-status/:paymentId', async (req, res) => {
 
         const list = response.data?.data || response.data;
 
-        // 3. Log de Debug (Vai aparecer no terminal)
-        // console.log("📦 [DEBUG API] Resposta crua:", JSON.stringify(list, null, 2));
-
-        // Tenta encontrar o boleto/pix específico
         const bill = Array.isArray(list)
             ? list.find((b: any) => b.id === paymentId)
             : list;
@@ -317,10 +314,6 @@ router.get('/check-status/:paymentId', async (req, res) => {
     }
 });
 
-/* ======================================================
-   ENTREGA DO PRODUTO (STAFF - CENÁRIO RETIRADA)
-====================================================== */
-
 router.patch('/:id/deliver', async (req, res) => {
     try {
         const { id } = req.params;
@@ -344,10 +337,6 @@ router.patch('/:id/deliver', async (req, res) => {
         res.status(500).json({ error: "Erro ao confirmar entrega." });
     }
 });
-
-/* ======================================================
-   LISTA DE RETIRADA (STAFF)
-====================================================== */
 
 router.get('/pending', async (_, res) => {
     try {
