@@ -251,65 +251,52 @@ router.post('/', async (req, res) => {
 
 
 router.get('/check-status/:paymentId', async (req, res) => {
-    // 1. Mata o Cache para garantir dados frescos
+    // 1. Bloqueia cache para não pegar resposta velha
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
 
     try {
         const { paymentId } = req.params;
-        // console.log(`🔍 [POLLING] Verificando ID: ${paymentId}`);
 
-        // 2. Chama a API
+        // 🚀 PASSO 1: Olha PRIMEIRO no nosso Banco (que o Webhook já atualizou)
+        const localSale = await prisma.sale.findUnique({
+            where: { externalId: paymentId }
+        });
+
+        // Se no nosso banco já está PAID, libera IMEDIATAMENTE!
+        // Não depende mais da lentidão da API da AbacatePay.
+        if (localSale?.status === 'PAID') {
+            return res.json({
+                status: 'PAID',
+                orderCode: localSale.orderCode
+            });
+        }
+
+        // 🐢 PASSO 2: Se no banco ainda não tá pago, aí sim pergunta pra API (Fallback)
         const response = await gatewayApi.get('/billing/list', {
             params: { id: paymentId }
         });
 
         const list = response.data?.data || response.data;
+        const bill = Array.isArray(list) ? list.find((b: any) => b.id === paymentId) : list;
 
-        const bill = Array.isArray(list)
-            ? list.find((b: any) => b.id === paymentId)
-            : list;
-
-        if (!bill) {
-            console.warn("⚠️ [DEBUG] Bill não encontrado na lista.");
-            return res.json({ status: 'PENDING' });
-        }
-
-        console.log(`👀 [DEBUG] Status na API: ${bill.status}`);
-
-        // 4. Verificação de Pagamento (Aceita PAID, paid, COMPLETED, completed)
-        const status = String(bill.status).toUpperCase();
-
-        if (status === 'PAID' || status === 'COMPLETED') {
-
-            // Busca a venda no banco
-            const sale = await prisma.sale.findUnique({
-                where: { externalId: paymentId }
-            });
-
-            if (sale) {
-                // Se ainda não estiver pago no NOSSO banco, atualiza
-                if (sale.status !== 'PAID') {
-                    console.log(`✅ [ATUALIZANDO] Venda ${sale.orderCode} mudou para PAID!`);
-                    await prisma.sale.update({
-                        where: { id: sale.id },
-                        data: { status: 'PAID' }
-                    });
-                }
-
-                return res.json({
-                    status: 'PAID',
-                    orderCode: sale.orderCode
+        if (bill && (bill.status === 'PAID' || bill.status === 'COMPLETED')) {
+            // Se a API diz que pagou, mas o banco não sabia, atualiza agora
+            if (localSale && localSale.status !== 'PAID') {
+                await prisma.sale.update({
+                    where: { id: localSale.id },
+                    data: { status: 'PAID' }
                 });
             }
+            return res.json({
+                status: 'PAID',
+                orderCode: localSale?.orderCode
+            });
         }
 
         return res.json({ status: 'PENDING' });
 
     } catch (err: any) {
-        console.error('❌ [ERRO POLLING]:', err.message);
-        // Em caso de erro, mantém o front esperando, não quebra
+        console.error('Erro no check-status:', err.message);
         return res.json({ status: 'PENDING' });
     }
 });
