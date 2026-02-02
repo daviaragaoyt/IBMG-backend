@@ -2,10 +2,14 @@ import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { z } from 'zod';
 import { PersonType, CheckpointCategory } from '@prisma/client';
-import { startOfDay, endOfDay } from 'date-fns';
+import { startOfDay } from 'date-fns';
 
 const router = Router();
 const SERVICE_CATEGORIES = ['PROPHETIC', 'PRAYER', 'EVANGELISM', 'CONSOLIDATION', 'STORE'];
+
+/* ======================================================
+   SCHEMAS DE VALIDAÇÃO (ZOD)
+====================================================== */
 
 const CountSchema = z.object({
     checkpointId: z.string().min(1),
@@ -17,19 +21,47 @@ const CountSchema = z.object({
     marketingSource: z.string().nullable().optional()
 });
 
-router.get('/checkpoints', async (req, res) => {
-    const list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
-    res.json(list);
+const SaleSchema = z.object({
+    checkpointId: z.string().min(1),
+    paymentMethod: z.string(),
+    buyerType: z.enum(['MEMBER', 'VISITOR']).default('VISITOR'),
+    buyerGender: z.enum(['M', 'F']).default('M'),
+    items: z.array(z.object({
+        productId: z.string(),
+        quantity: z.number(),
+        price: z.number()
+    }))
 });
 
+/* ======================================================
+   ROTAS DE LEITURA
+====================================================== */
+
+// Lista todos os locais para o Select da Staff
+router.get('/checkpoints', async (req, res) => {
+    try {
+        const list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
+        res.json(list);
+    } catch (e) {
+        res.status(500).json({ error: "Erro ao listar locais." });
+    }
+});
+
+/* ======================================================
+   ROTAS DE ESCRITA (OPERAÇÃO)
+====================================================== */
+
+// 1. Contagem Manual (+1 Homem, +1 Mulher)
 router.post('/count', async (req, res) => {
     try {
         const data = CountSchema.parse(req.body);
-        // Debounce simples
+
+        // Proteção contra duplo clique (Debounce de 500ms)
         const lastEntry = await prisma.manualEntry.findFirst({
             where: { checkpointId: data.checkpointId, type: data.type as PersonType },
             orderBy: { timestamp: 'desc' }
         });
+
         if (lastEntry && (new Date().getTime() - new Date(lastEntry.timestamp).getTime() < 500)) {
             return res.json({ success: true, ignored: true });
         }
@@ -39,16 +71,20 @@ router.post('/count', async (req, res) => {
                 checkpointId: data.checkpointId,
                 type: data.type as PersonType,
                 church: data.church || 'Ibmg Sede',
-                ageGroup: data.ageGroup || 'ADULTO',
+                ageGroup: data.ageGroup || 'ADULT',
                 gender: data.gender || 'M',
                 quantity: data.quantity,
                 marketingSource: data.marketingSource
             }
         });
         res.json({ success: true, entry });
-    } catch (error) { res.status(400).json({ error: "Erro count" }); }
+    } catch (error) {
+        console.error(error);
+        res.status(400).json({ error: "Erro ao registrar contagem." });
+    }
 });
 
+// 2. Scan de QR Code (Entrada Automática)
 router.post('/track', async (req, res) => {
     const { personId, checkpointId } = req.body;
     try {
@@ -63,9 +99,14 @@ router.post('/track', async (req, res) => {
             include: { person: true }
         });
 
+        // Lógica de reentrada: ignora se for muito rápido (<60s) ou se o local não permitir reentrada
         if (existing) {
-            if ((new Date().getTime() - new Date(existing.timestamp).getTime()) / 1000 < 60) return res.json({ success: true, status: 'IGNORED', message: "⏳ Aguarde..." });
-            if (!allowReentry) return res.json({ success: true, status: 'REENTRY', message: `⚠️ Já entrou hoje.` });
+            if ((new Date().getTime() - new Date(existing.timestamp).getTime()) / 1000 < 60) {
+                return res.json({ success: true, status: 'IGNORED', message: "⏳ Aguarde..." });
+            }
+            if (!allowReentry) {
+                return res.json({ success: true, status: 'REENTRY', message: `⚠️ Já entrou hoje.` });
+            }
         }
 
         const newMove = await prisma.movement.create({
@@ -73,7 +114,41 @@ router.post('/track', async (req, res) => {
             include: { person: true }
         });
         res.json({ success: true, status: 'SUCCESS', person: newMove.person });
-    } catch (error) { res.status(500).json({ error: "Erro track" }); }
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao processar scan." });
+    }
+});
+
+// 3. Venda Manual (Lançamento direto pela Staff sem AbacatePay)
+router.post('/sales', async (req, res) => {
+    try {
+        const data = SaleSchema.parse(req.body);
+        let total = 0;
+        data.items.forEach(i => total += (Number(i.price) * Number(i.quantity)));
+
+        const sale = await prisma.sale.create({
+            data: {
+                orderCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
+                checkpointId: data.checkpointId,
+                paymentMethod: data.paymentMethod,
+                total: total,
+                status: 'PAID', // Venda manual assume-se paga na hora (dinheiro/maquininha externa)
+                buyerType: data.buyerType as PersonType,
+                buyerGender: data.buyerGender,
+                items: {
+                    create: data.items.map(i => ({
+                        productId: i.productId,
+                        quantity: i.quantity,
+                        price: i.price
+                    }))
+                }
+            }
+        });
+        res.json({ success: true, sale });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: "Erro ao registrar venda manual." });
+    }
 });
 
 export default router;

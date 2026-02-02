@@ -76,7 +76,7 @@ async function main() {
             // --- Loja Psalms (Venda Ativa) ---
             {
                 name: "Camiseta Ekklesia 2026",
-                price: 0.01,
+                price: 1.00,
                 category: "LOJA",
                 description: "Camiseta oficial do evento. 100% Algodão.",
                 imageUrl: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80&w=500",
@@ -88,7 +88,7 @@ async function main() {
             },
             {
                 name: "Livro: Avivamento",
-                price: 0.01,
+                price: 1.00,
                 category: "LOJA",
                 description: "Livro exclusivo sobre o tema do ano.",
                 imageUrl: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=500",
@@ -100,7 +100,7 @@ async function main() {
             },
             {
                 name: "Boné Trucker",
-                price: 0.01,
+                price: 1.00,
                 category: "LOJA",
                 imageUrl: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&q=80&w=500",
                 images: [
