@@ -5,36 +5,34 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { UPLOAD_DIR } from './lib/upload';
 
-// Importação dos Módulos
 import AuthRoutes from './modules/Auth';
 import OperationsRoutes from './modules/Operations';
 import MeetingsRoutes from './modules/Meetings';
 import DashboardRoutes from './modules/Dashboard';
 import ProductsRoutes from './modules/Products';
 import OrdersRoutes from './modules/Orders';
-import PeopleRoutes from './modules/People';
+import PeopleRoutes from './modules/People'; // ✅ Módulo novo importado
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Configuração de Middlewares
 app.use(cors({ origin: '*' }));
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb' })); // Aumentado para suportar fotos
 app.use(morgan('dev'));
 
-// Arquivos Estáticos (Imagens da Psalms)
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-// Registro das Rotas
-app.use('/auth', AuthRoutes);
-app.use('/operations', OperationsRoutes);
-app.use('/meetings', MeetingsRoutes);
-app.use('/dashboard', DashboardRoutes);
-app.use('/products', ProductsRoutes);
-app.use('/orders', OrdersRoutes);
-app.use('/people', PeopleRoutes);
+app.use('/auth', AuthRoutes);             // Auth Legado (se houver)
+app.use('/operations', OperationsRoutes); // Escalas e Cultos
+app.use('/meetings', MeetingsRoutes);     // Reuniões
+app.use('/dashboard', DashboardRoutes);   // Gráficos
+app.use('/products', ProductsRoutes);     // Produtos
+app.use('/orders', OrdersRoutes);         // Vendas e Webhook
+app.use('/', PeopleRoutes);
 
-
+// Rota de Teste (Health Check)
 app.get('/', (req, res) => {
   res.json({ status: 'API Online 🚀', system: 'Ekklesia v2.0' });
 });
