@@ -24,13 +24,14 @@ app.use(morgan('dev'));
 
 app.use('/uploads', express.static(UPLOAD_DIR));
 
+app.use('/', PeopleRoutes);
+
 app.use('/auth', AuthRoutes);             // Auth Legado (se houver)
 app.use('/operations', OperationsRoutes); // Escalas e Cultos
 app.use('/meetings', MeetingsRoutes);     // Reuniões
 app.use('/dashboard', DashboardRoutes);   // Gráficos
 app.use('/products', ProductsRoutes);     // Produtos
 app.use('/orders', OrdersRoutes);         // Vendas e Webhook
-app.use('/', PeopleRoutes);
 
 // Rota de Teste (Health Check)
 app.get('/', (req, res) => {
