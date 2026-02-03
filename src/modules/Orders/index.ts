@@ -325,29 +325,33 @@ router.patch('/:id/deliver', async (req, res) => {
     }
 });
 
-router.get('/pending', async (_, res) => {
+router.get('/pending', async (req, res) => {
     try {
+        // Busca tanto PENDENTE (para cobrar no balcão) quanto PAGO (para entregar)
         const sales = await prisma.sale.findMany({
-            where: { status: 'PAID' }, // Mostra apenas o que já foi pago e precisa entregar
+            where: {
+                status: { in: ['PENDING', 'PAID'] }
+            },
             include: {
                 items: { include: { product: true } },
                 person: true
             },
-            orderBy: { timestamp: 'asc' } // Fila por ordem de chegada
+            orderBy: { timestamp: 'desc' } // Mais recentes primeiro
         });
 
-        // Tratamento de Decimals para o Front não quebrar
-        const safeSales = sales.map(s => ({
-            ...s,
-            total: Number(s.total),
-            items: s.items.map(i => ({
-                ...i,
-                price: Number(i.price)
+        // 🛡️ CORREÇÃO CRÍTICA: Converte Decimal para Number
+        const safeSales = sales.map(sale => ({
+            ...sale,
+            total: Number(sale.total),
+            items: sale.items.map(item => ({
+                ...item,
+                price: Number(item.price)
             }))
         }));
 
         res.json(safeSales);
-    } catch {
+    } catch (err) {
+        console.error("Erro ao listar pedidos:", err);
         res.status(500).json({ error: 'Erro ao listar pedidos.' });
     }
 });
