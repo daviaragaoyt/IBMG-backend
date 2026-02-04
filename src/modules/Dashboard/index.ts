@@ -3,13 +3,67 @@ import { prisma } from '../../lib/prisma';
 
 const router = Router();
 
-router.get('/dashboard', async (req, res) => {
+// =========================================================
+// 1. CONFIGURAÇÃO GLOBAL (CONTADOR DE REUNIÕES)
+// =========================================================
+router.get('/meeting-count', async (req, res) => {
     try {
-        // --- 1. CONFIGURAÇÃO DE INTERVALO ---
-        const start = new Date('2026-01-01T00:00:00.000Z');
-        const end = new Date('2026-02-18T23:59:59.000Z');
+        const config = await prisma.globalConfig.findUnique({ where: { key: 'MEETING_COUNT' } });
+        res.json({ count: config ? Number(config.value) : 0 });
+    } catch (e) {
+        res.status(500).json({ error: "Erro ao buscar contagem" });
+    }
+});
 
-        // Estrutura Base
+router.post('/meeting-count/increment', async (req, res) => {
+    try {
+        const current = await prisma.globalConfig.findUnique({ where: { key: 'MEETING_COUNT' } });
+        const newValue = current ? Number(current.value) + 1 : 1;
+        await prisma.globalConfig.upsert({
+            where: { key: 'MEETING_COUNT' },
+            update: { value: String(newValue) },
+            create: { key: 'MEETING_COUNT', value: "1" }
+        });
+        res.json({ count: newValue });
+    } catch (e) {
+        res.status(500).json({ error: "Erro ao incrementar" });
+    }
+});
+
+// =========================================================
+// 2. CONSOLIDAÇÃO (SALVAR FICHA)
+// =========================================================
+router.post('/consolidation/save', async (req, res) => {
+    try {
+        const { name, phone, decision, observer } = req.body;
+        const person = await prisma.person.create({
+            data: {
+                name,
+                phone,
+                type: 'VISITOR',
+                role: 'PARTICIPANT',
+                marketingSource: `Decisão: ${decision}`,
+                church: 'Consolidação',
+                department: observer
+            }
+        });
+        res.json({ success: true, person });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: "Erro ao salvar ficha" });
+    }
+});
+
+// =========================================================
+// 3. DASHBOARD GERAL (GRÁFICOS E ESTATÍSTICAS)
+// =========================================================
+router.get('/', async (req, res) => {
+    try {
+        // Intervalo Fixo (Janeiro a Dezembro 2026)
+        const start = new Date('2026-01-01T00:00:00.000Z');
+        const end = new Date('2026-12-31T23:59:59.000Z');
+
+        // Estrutura Base Vazia
         const emptyStats = () => ({
             total: 0,
             type: { VISITOR: 0, MEMBER: 0 },
@@ -36,119 +90,91 @@ router.get('/dashboard', async (req, res) => {
             availableDays: []
         };
 
-        // Inicializa dias
-        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-            const dayKey = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-            if (!responseData.checkpointsData[dayKey]) {
-                responseData.checkpointsData[dayKey] = {
-                    'Total': emptyStats(), 'Kids': emptyStats(),
-                    'Recepcao': emptyStats(), 'Consolidacao': emptyStats()
-                };
-                responseData.timeline[dayKey] = {};
-            }
-        }
+        // --- BUSCAS PARALELAS (OTIMIZAÇÃO) ---
+        const [manual, sales, meetings, consolidationCount] = await Promise.all([
+            // 1. Contagens Manuais
+            prisma.manualEntry.findMany({ where: { timestamp: { gte: start, lte: end } }, include: { checkpoint: true } }),
+            // 2. Vendas Pagas
+            prisma.sale.findMany({ where: { status: 'PAID', timestamp: { gte: start, lte: end } }, include: { items: { include: { product: true } } } }),
+            // 3. Reuniões
+            prisma.meeting.groupBy({ by: ['type'], _count: { id: true } }),
+            // 4. Consolidação Total
+            prisma.person.count({ where: { marketingSource: { startsWith: 'Decisão' } } })
+        ]);
 
-        // --- 2. PROCESSAR VENDAS (FINANCEIRO REAL) ---
-        const sales = await prisma.sale.findMany({
-            where: { status: 'PAID', timestamp: { gte: start, lte: end } },
-            include: { items: { include: { product: true } } }
-        });
+        responseData.consolidationCount = consolidationCount;
 
+        // --- PROCESSAR VENDAS (AQUI ESTAVA O ERRO NO SEU CÓDIGO) ---
         sales.forEach(s => {
             let saleTotal = 0;
 
+            // 1. Soma os Itens
             s.items.forEach(i => {
-                const itemPrice = Number(i.price);
-                const itemTotal = itemPrice * i.quantity;
+                const itemTotal = Number(i.price) * i.quantity;
                 saleTotal += itemTotal;
 
-                const category = i.product.category ? i.product.category.toUpperCase() : 'LOJA';
+                // LÓGICA CORRIGIDA:
+                // Se a categoria no banco for explicitamente CANTINA ou FOOD, vai pra Cantina.
+                // Todo o resto (Null, Psalms, Livros, Camisetas) cai na LOJA.
+                const dbCat = i.product?.category?.toUpperCase() || '';
+                const category = (dbCat === 'CANTINA' || dbCat === 'FOOD') ? 'CANTINA' : 'LOJA';
 
-                if (!responseData.salesStats.byCategory[category]) {
-                    responseData.salesStats.byCategory[category] = 0;
-                }
-                responseData.salesStats.byCategory[category] += itemTotal;
+                responseData.salesStats.byCategory[category] = (responseData.salesStats.byCategory[category] || 0) + itemTotal;
             });
 
             responseData.salesStats.totalRevenue += saleTotal;
 
+            // 2. Conta se foi Membro ou Visitante
+            // Se buyerType for nulo (venda rápida), conta como VISITOR
             const type = s.buyerType === 'MEMBER' ? 'MEMBER' : 'VISITOR';
             responseData.salesStats.demographics[type]++;
         });
 
-        // --- 3. PROCESSAR FLUXO (CHECKPOINTS) ---
-        const entries = await prisma.manualEntry.findMany({
-            where: { timestamp: { gte: start, lte: end } },
-            include: { checkpoint: true }
-        });
+        // --- PROCESSAR REUNIÕES ---
+        responseData.meetingStats.agendadas = meetings.find(m => m.type === 'AGENDADA')?._count.id || 0;
+        responseData.meetingStats.realizadas = meetings.find(m => m.type === 'REALIZADA')?._count.id || 0;
 
-        entries.forEach((entry: any) => {
+        // --- PROCESSAR CHECKPOINTS (MANUAL ENTRY) ---
+        manual.forEach((entry: any) => {
             const entryDate = new Date(entry.timestamp);
             const dayKey = entryDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-            const hour = entryDate.getHours().toString();
 
-            if (responseData.checkpointsData[dayKey]) {
-                if (!responseData.timeline[dayKey][hour]) responseData.timeline[dayKey][hour] = 0;
-                responseData.timeline[dayKey][hour] += entry.quantity;
-
-                const cpName = entry.checkpoint?.name?.toUpperCase() || '';
-                const mktSource = entry.marketingSource?.toUpperCase() || '';
-                let targetCategory = 'Recepcao';
-                let isTotal = true;
-
-                if (cpName.includes('DECIS') || cpName.includes('ALTAR') || mktSource.includes('DECIS')) {
-                    targetCategory = 'Consolidacao';
-                    isTotal = false;
-                    responseData.consolidationCount += entry.quantity;
-                } else if (cpName.includes('KIDS') || cpName.includes('CRIANÇA') || entry.ageGroup === 'CRIANCA') {
-                    targetCategory = 'Kids';
-                }
-
-                const addToStats = (categoryName: string) => {
-                    const stats = responseData.checkpointsData[dayKey][categoryName];
-                    stats.total += entry.quantity;
-
-                    if (entry.type === 'MEMBER') stats.type.MEMBER += entry.quantity; else stats.type.VISITOR += entry.quantity;
-                    if (entry.gender === 'M') stats.gender.M += entry.quantity; if (entry.gender === 'F') stats.gender.F += entry.quantity;
-                    if (entry.ageGroup === 'CRIANCA') stats.age.CRIANCA += entry.quantity;
-                    if (entry.ageGroup === 'JOVEM') stats.age.JOVEM += entry.quantity;
-                    if (entry.ageGroup === 'ADULTO') stats.age.ADULTO += entry.quantity;
-
-                    if (entry.marketingSource) {
-                        const src = entry.marketingSource;
-                        if (!stats.marketing[src]) stats.marketing[src] = 0;
-                        stats.marketing[src] += entry.quantity;
-                    }
-                    if (entry.church) {
-                        const ch = entry.church;
-                        if (!stats.church[ch]) stats.church[ch] = 0;
-                        stats.church[ch] += entry.quantity;
-                    }
-                    if (targetCategory === 'Consolidacao') stats.accepted += entry.quantity;
+            // Inicializa o dia se não existir
+            if (!responseData.checkpointsData[dayKey]) {
+                responseData.checkpointsData[dayKey] = {
+                    'Total': emptyStats(), 'Kids': emptyStats(), 'Recepcao': emptyStats(), 'Consolidacao': emptyStats()
                 };
+            }
 
-                addToStats(targetCategory);
-                if (isTotal) {
-                    addToStats('Total');
-                    responseData.manualCount += entry.quantity;
-                }
+            const cpName = entry.checkpoint?.name?.toUpperCase() || '';
+            let targetCategory = 'Recepcao';
+            let isTotal = true;
+
+            if (cpName.includes('DECIS') || cpName.includes('ALTAR')) {
+                targetCategory = 'Consolidacao';
+                isTotal = false; // Não conta no total geral de pessoas na igreja
+            } else if (cpName.includes('KIDS') || cpName.includes('CRIANÇA')) {
+                targetCategory = 'Kids';
+            }
+
+            // Função auxiliar para somar
+            const addToStats = (categoryName: string) => {
+                const stats = responseData.checkpointsData[dayKey][categoryName];
+                stats.total += entry.quantity;
+
+                if (entry.type === 'MEMBER') stats.type.MEMBER += entry.quantity;
+                else stats.type.VISITOR += entry.quantity;
+            };
+
+            addToStats(targetCategory);
+            if (isTotal) {
+                addToStats('Total');
+                responseData.manualCount += entry.quantity;
             }
         });
 
-        // --- 4. SCANNER (INGRESSOS) ---
-        // CORREÇÃO: Removemos a chamada ao prisma.ticket para evitar o erro
-        responseData.scannerCount = 0;
-
-        // --- 5. FILTRO DE DIAS ---
-        const todayKey = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        const mandatoryDays = ['14/02', '15/02', '16/02', '17/02'];
-
-        responseData.availableDays = Object.keys(responseData.checkpointsData).filter(day => {
-            const hasData = responseData.checkpointsData[day]['Total'].total > 0 ||
-                responseData.checkpointsData[day]['Kids'].total > 0 ||
-                responseData.checkpointsData[day]['Consolidacao'].total > 0;
-            return day === todayKey || mandatoryDays.includes(day) || hasData;
-        }).sort((a: string, b: string) => {
+        // --- LISTA DE DIAS DISPONÍVEIS ---
+        responseData.availableDays = Object.keys(responseData.checkpointsData).sort((a: string, b: string) => {
             const [da, ma] = a.split('/').map(Number);
             const [db, mb] = b.split('/').map(Number);
             return (ma - mb) || (da - db);
