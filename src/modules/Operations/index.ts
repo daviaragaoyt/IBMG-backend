@@ -18,7 +18,10 @@ const CountSchema = z.object({
     quantity: z.number().min(1).default(1),
     ageGroup: z.string().optional(),
     gender: z.string().optional(),
-    marketingSource: z.string().nullable().optional()
+    marketingSource: z.string().nullable().optional(),
+    isSalvation: z.boolean().optional().default(false),
+    isHealing: z.boolean().optional().default(false),
+    isDeliverance: z.boolean().optional().default(false)
 });
 
 const SaleSchema = z.object({
@@ -47,22 +50,32 @@ router.get('/checkpoints', async (req, res) => {
     }
 });
 
-/* ======================================================
-   ROTAS DE ESCRITA (OPERAÇÃO)
-====================================================== */
-
 // 1. Contagem Manual (+1 Homem, +1 Mulher)
 router.post('/count', async (req, res) => {
     try {
         const data = CountSchema.parse(req.body);
 
+
+        // Map inputs to Prisma Enums
+        const genderInput = data.gender ? (data.gender.startsWith('M') ? 'M' : 'F') : undefined;
+        const ageGroupInput = data.ageGroup ? String(data.ageGroup) : undefined;
+
         // Proteção contra duplo clique (Debounce de 500ms)
+        // Buscamos o último registro apenas por tipo e local
         const lastEntry = await prisma.manualEntry.findFirst({
-            where: { checkpointId: data.checkpointId, type: data.type as PersonType },
+            where: {
+                checkpointId: data.checkpointId,
+                type: data.type as PersonType
+            } as any,
             orderBy: { timestamp: 'desc' }
         });
 
-        if (lastEntry && (new Date().getTime() - new Date(lastEntry.timestamp).getTime() < 500)) {
+        // Verificamos se é idêntico (mesmo gênero/idade ou ambos nulos) e se foi recente
+        const isSameEntry = lastEntry &&
+            String(lastEntry.gender || '') === String(genderInput || '') &&
+            String(lastEntry.ageGroup || '') === String(ageGroupInput || '');
+
+        if (isSameEntry && (new Date().getTime() - new Date(lastEntry.timestamp).getTime() < 500)) {
             return res.json({ success: true, ignored: true });
         }
 
@@ -71,11 +84,14 @@ router.post('/count', async (req, res) => {
                 checkpointId: data.checkpointId,
                 type: data.type as PersonType,
                 church: data.church || 'Ibmg Sede',
-                ageGroup: data.ageGroup || 'ADULT',
-                gender: data.gender || 'M',
+                ageGroup: ageGroupInput,
+                gender: genderInput,
                 quantity: data.quantity,
-                marketingSource: data.marketingSource
-            }
+                marketingSource: data.marketingSource,
+                isSalvation: data.isSalvation,
+                isHealing: data.isHealing,
+                isDeliverance: data.isDeliverance
+            } as any
         });
         res.json({ success: true, entry });
     } catch (error) {

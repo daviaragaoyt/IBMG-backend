@@ -82,6 +82,10 @@ model ManualEntry {
   church          String?
   marketingSource String?    
 
+  isSalvation     Boolean    @default(false)
+  isHealing       Boolean    @default(false)
+  isDeliverance   Boolean    @default(false)
+
   checkpointId    String
   checkpoint      Checkpoint @relation(fields: [checkpointId], references: [id])
 

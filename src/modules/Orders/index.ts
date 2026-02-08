@@ -78,6 +78,19 @@ router.post('/', async (req, res) => {
             status         // Status se já pagou
         } = req.body;
 
+        // VERIFICAÇÃO DE STAFF (Via Token/Header)
+        const authHeader = req.headers.authorization;
+        const token = authHeader?.replace('Bearer ', '');
+        let isStaffAction = false;
+
+        if (token) {
+            const staffUser = await prisma.person.findUnique({ where: { id: token } });
+            if (staffUser && staffUser.role === 'STAFF') {
+                isStaffAction = true;
+                console.log(`👮‍♂️ Ação de Staff detectada: ${staffUser.name}`);
+            }
+        }
+
         const parsedItems = typeof items === 'string' ? JSON.parse(items) : items;
         if (!Array.isArray(parsedItems) || !parsedItems.length) return res.status(400).json({ error: 'Carrinho vazio.' });
 
@@ -113,15 +126,17 @@ router.post('/', async (req, res) => {
             if (person) buyerType = person.type; // Aqui já vem tipado do banco
         }
 
-        // --- C. ROTA STAFF (Dinheiro/Cartão/Maquininha) ---
-        if (paymentMethod && paymentMethod !== 'PIX') {
+
+        // --- C. ROTA STAFF (Dinheiro/Cartão OU PIX Manual de Balcão) ---
+        // Se for PIX e for Staff, entra aqui também
+        if ((paymentMethod && paymentMethod !== 'PIX') || (isStaffAction && paymentMethod === 'PIX')) {
             const orderCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
             const sale = await prisma.sale.create({
                 data: {
                     orderCode,
                     total,
-                    status: status || 'PENDING',
+                    status: status || 'PAID', // Staff já registra como PAGO se for PIX Balcão
                     paymentMethod: paymentMethod || 'MONEY',
                     buyerName: name || 'Balcão',
                     buyerType: buyerType, // 👈 Agora vai funcionar
@@ -139,10 +154,11 @@ router.post('/', async (req, res) => {
             return res.json({ sale: { ...sale, total: Number(sale.total) } });
         }
 
-        // --- D. ROTA ONLINE (PIX / AbacatePay) ---
-        if (!name || !email || !cpf || !phone) {
-            return res.status(400).json({ error: 'Para PIX Online, preencha todos os dados.' });
-        }
+        // --- D. ROTA ONLINE (PIX / AbacatePay) - APENAS SE NÃO FOR STAFF ---
+        // OBS: Relaxando validação para caso o frontend não envie tudo (pedido do usuário).
+        // if (!name || !email || !cpf || !phone) {
+        //    return res.status(400).json({ error: 'Para PIX Online, preencha todos os dados.' });
+        // }
 
         const cleanCPF = normalizeCPF(cpf);
         const cleanPhone = String(phone).replace(/\D/g, '');
@@ -239,8 +255,14 @@ router.get('/check-status/:paymentId', async (req, res) => {
 
 router.get('/pending', async (req, res) => {
     try {
+        // 1. FILTRO DE PENDÊNCIAS (Rota /pending)
         const sales = await prisma.sale.findMany({
-            where: { status: { in: ['PENDING', 'PAID'] } },
+            where: {
+                OR: [
+                    { status: 'PAID' }, // Vendas Pagas aparecem
+                    { status: 'PENDING', paymentMethod: { not: 'PIX' } } // Pendentes aparecem SÓ se NÃO forem Pix Online
+                ]
+            },
             include: { items: { include: { product: true } }, person: true },
             orderBy: { timestamp: 'desc' }
         });

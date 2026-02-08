@@ -52,7 +52,7 @@ app.post('/auth/login', async (req, res) => {
     }
 
     console.log(`✅ Logado: ${user.name}`);
-    res.json(user);
+    res.json({ ...user, token: user.id });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro interno." });

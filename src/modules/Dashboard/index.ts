@@ -72,7 +72,11 @@ router.get('/', async (req, res) => {
             marketing: {} as Record<string, number>,
             church: {} as Record<string, number>,
             accepted: 0,
-            reconciled: 0
+            reconciled: 0,
+            // Novos campos espirituais
+            salvation: { total: 0, M: 0, F: 0, VISITOR: 0, MEMBER: 0 },
+            healing: { total: 0, M: 0, F: 0, VISITOR: 0, MEMBER: 0 },
+            deliverance: { total: 0, M: 0, F: 0, VISITOR: 0, MEMBER: 0 }
         });
 
         const responseData: any = {
@@ -146,27 +150,73 @@ router.get('/', async (req, res) => {
                 };
             }
 
-            const cpName = entry.checkpoint?.name?.toUpperCase() || '';
-            let targetCategory = 'Recepcao';
+            // Agrupamento Dinâmico
+            const cpName = entry.checkpoint?.name || 'Desconhecido';
+            const cpNameUpper = cpName.toUpperCase();
+
+            let targetCategory = cpName; // Padrão: O nome do próprio checkpoint vira a categoria
             let isTotal = true;
 
-            if (cpName.includes('DECIS') || cpName.includes('ALTAR')) {
-                targetCategory = 'Consolidacao';
-                isTotal = false; // Não conta no total geral de pessoas na igreja
-            } else if (cpName.includes('KIDS') || cpName.includes('CRIANÇA')) {
-                targetCategory = 'Kids';
+            // Regras Especiais de Agrupamento - REMOVIDAS
+            // Agora passamos o nome original do checkpoint
+            // targetCategory = cpName; // Já está definido acima
+            isTotal = true; // Tudo conta para o total, a menos que seja algo muito específico que queira excluir depois.
+
+            // Inicializa a categoria se não existir neste dia
+            if (!responseData.checkpointsData[dayKey][targetCategory]) {
+                responseData.checkpointsData[dayKey][targetCategory] = emptyStats();
             }
 
             // Função auxiliar para somar
             const addToStats = (categoryName: string) => {
                 const stats = responseData.checkpointsData[dayKey][categoryName];
+                if (!stats) return; // Segurança
+
                 stats.total += entry.quantity;
 
                 if (entry.type === 'MEMBER') stats.type.MEMBER += entry.quantity;
                 else stats.type.VISITOR += entry.quantity;
+
+                if (entry.ageGroup) {
+                    const ageKey = entry.ageGroup as keyof typeof stats.age;
+                    if (stats.age[ageKey] !== undefined) {
+                        stats.age[ageKey] += entry.quantity;
+                    }
+                }
+
+                // Lógica de Desfechos Espirituais
+                if (entry.isSalvation) {
+                    stats.salvation.total += entry.quantity;
+                    if (entry.gender === 'M') stats.salvation.M += entry.quantity;
+                    if (entry.gender === 'F') stats.salvation.F += entry.quantity;
+                    if (entry.type === 'VISITOR') stats.salvation.VISITOR += entry.quantity;
+                    if (entry.type === 'MEMBER') stats.salvation.MEMBER += entry.quantity;
+                }
+                if (entry.isHealing) {
+                    stats.healing.total += entry.quantity;
+                    if (entry.gender === 'M') stats.healing.M += entry.quantity;
+                    if (entry.gender === 'F') stats.healing.F += entry.quantity;
+                    if (entry.type === 'VISITOR') stats.healing.VISITOR += entry.quantity;
+                    if (entry.type === 'MEMBER') stats.healing.MEMBER += entry.quantity;
+                }
+                if (entry.isDeliverance) {
+                    stats.deliverance.total += entry.quantity;
+                    if (entry.gender === 'M') stats.deliverance.M += entry.quantity;
+                    if (entry.gender === 'F') stats.deliverance.F += entry.quantity;
+                    if (entry.type === 'VISITOR') stats.deliverance.VISITOR += entry.quantity;
+                    if (entry.type === 'MEMBER') stats.deliverance.MEMBER += entry.quantity;
+                }
+
+                if (entry.gender) {
+                    const genderKey = entry.gender as keyof typeof stats.gender;
+                    if (stats.gender[genderKey] !== undefined) {
+                        stats.gender[genderKey] += entry.quantity;
+                    }
+                }
             };
 
             addToStats(targetCategory);
+
             if (isTotal) {
                 addToStats('Total');
                 responseData.manualCount += entry.quantity;
