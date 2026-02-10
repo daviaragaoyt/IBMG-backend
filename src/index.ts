@@ -68,7 +68,6 @@ const RegisterSchema = z.object({
   department: z.string().optional(),
   church: z.string().optional(),
   gender: z.string().optional(),
-  marketingSource: z.string().optional(),
   age: z.union([z.string(), z.number()]).optional(),
   isStaff: z.boolean().optional()
 });

@@ -3,7 +3,7 @@ import { prisma } from '../../lib/prisma';
 
 const router = Router();
 
-router.get('/meetings', async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         // PASSO MÁGICO: Antes de listar, atualiza tudo que já passou do horário
         const now = new Date();
@@ -33,7 +33,7 @@ router.get('/meetings', async (req, res) => {
     }
 });
 
-router.post('/meetings', async (req, res) => {
+router.post('/', async (req, res) => {
     try {
         const { title, date, type, notes, createdBy } = req.body;
         const meeting = await prisma.meeting.create({
@@ -43,7 +43,7 @@ router.post('/meetings', async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erro meetings" }); }
 });
 
-router.delete('/meetings/:id', async (req, res) => {
+router.delete('/:id', async (req, res) => {
     try {
         await prisma.meeting.delete({ where: { id: req.params.id } });
         res.json({ success: true });

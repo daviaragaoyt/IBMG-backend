@@ -28,7 +28,7 @@ model Person {
   department      String?    
   
   church          String?
-  marketingSource String?    
+
     
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
@@ -80,7 +80,7 @@ model ManualEntry {
   gender          String?
   ageGroup        String?
   church          String?
-  marketingSource String?    
+
 
   isSalvation     Boolean    @default(false)
   isHealing       Boolean    @default(false)
@@ -195,10 +195,8 @@ enum Role {
 
 enum CheckpointCategory {
   GENERAL
-  KIDS
   PROPHETIC
   PRAYER
   EVANGELISM
-  CONSOLIDATION
   STORE
 }

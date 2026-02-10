@@ -23,8 +23,6 @@ router.post('/quick-register', async (req, res) => {
         // Formata telefone
         const cleanPhone = data.phone ? data.phone.replace(/\D/g, '') : null;
 
-        // Cria a pessoa (ou atualiza se já existir pelo telefone/email)
-        // Usamos telefone como chave secundária se não tiver email
         let person = null;
 
         if (data.email) {
@@ -32,49 +30,26 @@ router.post('/quick-register', async (req, res) => {
                 where: { email: data.email },
                 update: {
                     name: data.name,
-                    phone: cleanPhone,
-                    marketingSource: data.decisionType || undefined
+                    phone: cleanPhone
                 },
                 create: {
                     name: data.name,
                     email: data.email,
                     phone: cleanPhone,
                     age: Number(data.age) || null,
-                    type: 'VISITOR',
-                    marketingSource: data.decisionType, // Salva se aceitou Jesus
-
+                    type: 'VISITOR'
                 }
             });
         } else {
-            // Se não tem email (comum no Altar/Kids), cria direto
+            // Se não tem email, cria direto
             person = await prisma.person.create({
                 data: {
                     name: data.name,
                     phone: cleanPhone,
                     age: Number(data.age) || null,
-                    type: 'VISITOR',
-                    marketingSource: data.decisionType,
-
+                    type: 'VISITOR'
                 }
             });
-        }
-
-        // Se for Kids ou Altar, registra também um movimento automático no Checkpoint
-        // Isso mata dois coelhos: cadastra os dados E conta no dashboard
-        if (data.department) {
-            // Tenta achar o checkpoint (ex: "Salinha Kids" ou "Altar")
-            const checkpoint = await prisma.checkpoint.findFirst({
-                where: {
-                    category: data.department === 'KIDS' ? 'KIDS' :
-                        data.department === 'CONSOLIDATION' ? 'CONSOLIDATION' : 'GENERAL'
-                }
-            });
-
-            if (checkpoint) {
-                await prisma.movement.create({
-                    data: { personId: person.id, checkpointId: checkpoint.id }
-                });
-            }
         }
 
         res.json({ success: true, person });

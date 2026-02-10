@@ -31,30 +31,6 @@ router.post('/meeting-count/increment', async (req, res) => {
 });
 
 // =========================================================
-// 2. CONSOLIDAÇÃO (SALVAR FICHA)
-// =========================================================
-router.post('/consolidation/save', async (req, res) => {
-    try {
-        const { name, phone, decision, observer } = req.body;
-        const person = await prisma.person.create({
-            data: {
-                name,
-                phone,
-                type: 'VISITOR',
-                role: 'PARTICIPANT',
-                marketingSource: `Decisão: ${decision}`,
-                church: 'Consolidação',
-                department: observer
-            }
-        });
-        res.json({ success: true, person });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: "Erro ao salvar ficha" });
-    }
-});
-
-// =========================================================
 // 3. DASHBOARD GERAL (GRÁFICOS E ESTATÍSTICAS)
 // =========================================================
 router.get('/', async (req, res) => {
@@ -69,7 +45,7 @@ router.get('/', async (req, res) => {
             type: { VISITOR: 0, MEMBER: 0 },
             gender: { M: 0, F: 0 },
             age: { CRIANCA: 0, JOVEM: 0, ADULTO: 0 },
-            marketing: {} as Record<string, number>,
+            // Marketing removido
             church: {} as Record<string, number>,
             accepted: 0,
             reconciled: 0,
@@ -82,7 +58,7 @@ router.get('/', async (req, res) => {
         const responseData: any = {
             salesStats: {
                 totalRevenue: 0,
-                byCategory: { LOJA: 0, CANTINA: 0 },
+                byCategory: { LOJA: 0 },
                 demographics: { MEMBER: 0, VISITOR: 0 }
             },
             meetingStats: { realizadas: 0, agendadas: 0 },
@@ -90,25 +66,20 @@ router.get('/', async (req, res) => {
             timeline: {},
             manualCount: 0,
             scannerCount: 0,
-            consolidationCount: 0,
             availableDays: []
         };
 
         // --- BUSCAS PARALELAS (OTIMIZAÇÃO) ---
-        const [manual, sales, meetings, consolidationCount] = await Promise.all([
+        const [manual, sales, meetings] = await Promise.all([
             // 1. Contagens Manuais
             prisma.manualEntry.findMany({ where: { timestamp: { gte: start, lte: end } }, include: { checkpoint: true } }),
             // 2. Vendas Pagas
             prisma.sale.findMany({ where: { status: 'PAID', timestamp: { gte: start, lte: end } }, include: { items: { include: { product: true } } } }),
             // 3. Reuniões
-            prisma.meeting.groupBy({ by: ['type'], _count: { id: true } }),
-            // 4. Consolidação Total
-            prisma.person.count({ where: { marketingSource: { startsWith: 'Decisão' } } })
+            prisma.meeting.groupBy({ by: ['type'], _count: { id: true } })
         ]);
 
-        responseData.consolidationCount = consolidationCount;
-
-        // --- PROCESSAR VENDAS (AQUI ESTAVA O ERRO NO SEU CÓDIGO) ---
+        // --- PROCESSAR VENDAS ---
         sales.forEach(s => {
             let saleTotal = 0;
 
@@ -117,19 +88,13 @@ router.get('/', async (req, res) => {
                 const itemTotal = Number(i.price) * i.quantity;
                 saleTotal += itemTotal;
 
-                // LÓGICA CORRIGIDA:
-                // Se a categoria no banco for explicitamente CANTINA ou FOOD, vai pra Cantina.
-                // Todo o resto (Null, Psalms, Livros, Camisetas) cai na LOJA.
-                const dbCat = i.product?.category?.toUpperCase() || '';
-                const category = (dbCat === 'CANTINA' || dbCat === 'FOOD') ? 'CANTINA' : 'LOJA';
-
-                responseData.salesStats.byCategory[category] = (responseData.salesStats.byCategory[category] || 0) + itemTotal;
+                // TUDO VAI PARA LOJA
+                responseData.salesStats.byCategory.LOJA = (responseData.salesStats.byCategory.LOJA || 0) + itemTotal;
             });
 
             responseData.salesStats.totalRevenue += saleTotal;
 
             // 2. Conta se foi Membro ou Visitante
-            // Se buyerType for nulo (venda rápida), conta como VISITOR
             const type = s.buyerType === 'MEMBER' ? 'MEMBER' : 'VISITOR';
             responseData.salesStats.demographics[type]++;
         });
@@ -146,45 +111,40 @@ router.get('/', async (req, res) => {
             // Inicializa o dia se não existir
             if (!responseData.checkpointsData[dayKey]) {
                 responseData.checkpointsData[dayKey] = {
-                    'Total': emptyStats(), 'Kids': emptyStats(), 'Recepcao': emptyStats(), 'Consolidacao': emptyStats()
+                    'Total': emptyStats()
                 };
             }
 
-            // Agrupamento Dinâmico
-            const cpName = entry.checkpoint?.name || 'Desconhecido';
-            const cpNameUpper = cpName.toUpperCase();
+            const dayStats = responseData.checkpointsData[dayKey];
 
-            let targetCategory = cpName; // Padrão: O nome do próprio checkpoint vira a categoria
-            let isTotal = true;
-
-            // Regras Especiais de Agrupamento - REMOVIDAS
-            // Agora passamos o nome original do checkpoint
-            // targetCategory = cpName; // Já está definido acima
-            isTotal = true; // Tudo conta para o total, a menos que seja algo muito específico que queira excluir depois.
-
-            // Inicializa a categoria se não existir neste dia
-            if (!responseData.checkpointsData[dayKey][targetCategory]) {
-                responseData.checkpointsData[dayKey][targetCategory] = emptyStats();
+            // DIAGNOSTIC LOGGING
+            if (!entry.checkpoint) {
+                console.warn(`⚠️ [Dashboard] ManualEntry ${entry.id} has NO Checkpoint relation! ID: ${entry.checkpointId}`);
+            } else if (!entry.checkpoint.name) {
+                console.warn(`⚠️ [Dashboard] ManualEntry ${entry.id} has Checkpoint with EMPTY name! ID: ${entry.checkpointId}`);
             }
 
-            // Função auxiliar para somar
-            const addToStats = (categoryName: string) => {
-                const stats = responseData.checkpointsData[dayKey][categoryName];
-                if (!stats) return; // Segurança
+            const name = entry.checkpoint && entry.checkpoint.name ? entry.checkpoint.name.trim() : `Local Indefinido (ID: ${entry.checkpointId.substring(0, 8)})`;
 
+            // Inicializa o checkpoint específico se não existir
+            if (!dayStats[name]) dayStats[name] = emptyStats();
+
+            // Função auxiliar para somar estatísticas no objeto alvo
+            const addToStats = (stats: any) => {
                 stats.total += entry.quantity;
 
                 if (entry.type === 'MEMBER') stats.type.MEMBER += entry.quantity;
                 else stats.type.VISITOR += entry.quantity;
 
+                if (entry.gender === 'M') stats.gender.M += entry.quantity;
+                if (entry.gender === 'F') stats.gender.F += entry.quantity;
+
                 if (entry.ageGroup) {
                     const ageKey = entry.ageGroup as keyof typeof stats.age;
-                    if (stats.age[ageKey] !== undefined) {
-                        stats.age[ageKey] += entry.quantity;
-                    }
+                    if (stats.age[ageKey] !== undefined) stats.age[ageKey] += entry.quantity;
                 }
 
-                // Lógica de Desfechos Espirituais
+                // Espiritual
                 if (entry.isSalvation) {
                     stats.salvation.total += entry.quantity;
                     if (entry.gender === 'M') stats.salvation.M += entry.quantity;
@@ -194,34 +154,40 @@ router.get('/', async (req, res) => {
                 }
                 if (entry.isHealing) {
                     stats.healing.total += entry.quantity;
-                    if (entry.gender === 'M') stats.healing.M += entry.quantity;
-                    if (entry.gender === 'F') stats.healing.F += entry.quantity;
-                    if (entry.type === 'VISITOR') stats.healing.VISITOR += entry.quantity;
-                    if (entry.type === 'MEMBER') stats.healing.MEMBER += entry.quantity;
+                    stats.healing[entry.gender === 'M' ? 'M' : 'F'] += entry.quantity;
+                    stats.healing[entry.type === 'MEMBER' ? 'MEMBER' : 'VISITOR'] += entry.quantity;
                 }
                 if (entry.isDeliverance) {
                     stats.deliverance.total += entry.quantity;
-                    if (entry.gender === 'M') stats.deliverance.M += entry.quantity;
-                    if (entry.gender === 'F') stats.deliverance.F += entry.quantity;
-                    if (entry.type === 'VISITOR') stats.deliverance.VISITOR += entry.quantity;
-                    if (entry.type === 'MEMBER') stats.deliverance.MEMBER += entry.quantity;
+                    stats.deliverance[entry.gender === 'M' ? 'M' : 'F'] += entry.quantity;
+                    stats.deliverance[entry.type === 'MEMBER' ? 'MEMBER' : 'VISITOR'] += entry.quantity;
                 }
 
                 if (entry.gender) {
-                    const genderKey = entry.gender as keyof typeof stats.gender;
-                    if (stats.gender[genderKey] !== undefined) {
-                        stats.gender[genderKey] += entry.quantity;
-                    }
+                    // Removed redundant gender counting block
                 }
+
+                // Marketing removido
             };
 
-            addToStats(targetCategory);
+            // Soma no específico
+            addToStats(dayStats[name]);
+            // Soma no Total do dia
+            addToStats(dayStats['Total']);
 
-            if (isTotal) {
-                addToStats('Total');
-                responseData.manualCount += entry.quantity;
-            }
+            // Soma no Total Geral do período
+            responseData.manualCount += entry.quantity;
         });
+
+        // --- CALCULAR TOTAL DO EVENTO (RECEPÇÃO) ---
+        // Filtrar apenas checkpoints de recepção e somar
+        const receptionCheckpoints = manual.filter((m: any) =>
+            m.checkpoint && (
+                m.checkpoint.name.toLowerCase().includes('recepção') ||
+                m.checkpoint.name.toLowerCase().includes('entrada')
+            )
+        );
+        responseData.totalEventEntrance = receptionCheckpoints.reduce((acc: number, curr: any) => acc + curr.quantity, 0);
 
         // --- LISTA DE DIAS DISPONÍVEIS ---
         responseData.availableDays = Object.keys(responseData.checkpointsData).sort((a: string, b: string) => {

@@ -29,12 +29,10 @@ async function main() {
         { name: "Recepção / Entrada", category: CheckpointCategory.GENERAL },
         { name: "Kombi Evangelística", category: CheckpointCategory.EVANGELISM },
         { name: "Psalms Store", category: CheckpointCategory.STORE },
-        { name: "Salinha Kids", category: CheckpointCategory.KIDS },
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
         { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
         { name: "Tenda Profética", category: CheckpointCategory.PROPHETIC },
-        { name: "Consolidação", category: CheckpointCategory.CONSOLIDATION },
-        { name: "Livraria", category: CheckpointCategory.STORE }
+
     ];
 
     console.log('📍 Sincronizando locais...');
@@ -64,28 +62,21 @@ async function main() {
             },
             {
                 name: "Moletom Ekklesia - Preto",
-                price: 180.00,
+                price: 185.00,
                 category: "LOJA",
                 description: "Moletom oficial flanelado com capuz.",
-                imageUrl: "moletom-preto.jpeg",
-                images: ["moletom-preto.jpeg", "moletom-preto1.jpeg"]
+                imageUrl: "casaco-preto.jpeg",
+                images: ["casaco-preto.jpeg", "casaco-preto1.jpeg"]
             },
             {
                 name: "Moletom Ekklesia - Vermelho",
-                price: 180.00,
+                price: 185.00,
                 category: "LOJA",
                 description: "Edição limitada. Moletom premium vermelho.",
                 imageUrl: "moletom-vermelho.jpeg",
                 images: ["moletom-vermelho.jpeg", "moletom-vermelho1.jpeg", "moletom-vermelho2.jpeg"]
             },
-            {
-                name: "Livro: Avivamento",
-                price: 45.00,
-                category: "LOJA",
-                description: "Literatura oficial do congresso.",
-                imageUrl: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?q=80&w=500",
-                images: ["https://images.unsplash.com/photo-1544947950-fa07a98d237f?q=80&w=500"]
-            }
+
         ]
     });
 
@@ -105,10 +96,9 @@ async function main() {
         { name: "Admin Geral", email: "admin@ibmg.com", dept: "ADMIN" },
         { name: "Ana Recepção", email: "ana@recepcao.com", dept: "RECEPTION" },
         { name: "Luiza Loja", email: "luiza@store.com", dept: "STORE" },
-        { name: "Carlos Kids", email: "carlos@kids.com", dept: "KIDS" },
+        { name: "Marcos Mártires", email: "marcos@martires.com", dept: "MARTIRES" },
         { name: "Paulo Evangelismo", email: "paulo@rua.com", dept: "EVANGELISM" },
-        { name: "Pedro Profético", email: "pedro@tenda.com", dept: "PROPHETIC" },
-        { name: "Sarah Consolidação", email: "sarah@ficha.com", dept: "CONSOLIDATION" }
+        { name: "Pedro Profético", email: "pedro@tenda.com", dept: "PROPHETIC" }
     ];
 
     console.log('👤 Sincronizando equipe Staff...');

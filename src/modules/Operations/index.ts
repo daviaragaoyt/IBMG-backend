@@ -55,6 +55,9 @@ router.post('/count', async (req, res) => {
     try {
         const data = CountSchema.parse(req.body);
 
+        // LOGGING DE DEBUG
+        // console.log(`📝 [Operations] Count received. CheckpointID: ${data.checkpointId}, Type: ${data.type}`);
+
 
         // Map inputs to Prisma Enums
         const genderInput = data.gender ? (data.gender.startsWith('M') ? 'M' : 'F') : undefined;
