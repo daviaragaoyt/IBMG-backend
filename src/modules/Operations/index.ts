@@ -32,7 +32,8 @@ const SaleSchema = z.object({
     items: z.array(z.object({
         productId: z.string(),
         quantity: z.number(),
-        price: z.number()
+        price: z.number(),
+        size: z.string().optional()
     }))
 });
 
@@ -46,6 +47,7 @@ router.get('/checkpoints', async (req, res) => {
         const list = await prisma.checkpoint.findMany({ orderBy: { name: 'asc' } });
         res.json(list);
     } catch (e) {
+        console.error("Erro em /checkpoints:", e);
         res.status(500).json({ error: "Erro ao listar locais." });
     }
 });
@@ -142,27 +144,45 @@ router.post('/track', async (req, res) => {
 router.post('/sales', async (req, res) => {
     try {
         const data = SaleSchema.parse(req.body);
-        let total = 0;
-        data.items.forEach(i => total += (Number(i.price) * Number(i.quantity)));
+        // Iniciando transação para garantir consistência do estoque
+        const sale = await prisma.$transaction(async (tx) => {
+            let total = 0;
 
-        const sale = await prisma.sale.create({
-            data: {
-                orderCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
-                checkpointId: data.checkpointId,
-                paymentMethod: data.paymentMethod,
-                total: total,
-                status: 'PAID', // Venda manual assume-se paga na hora (dinheiro/maquininha externa)
-                buyerType: data.buyerType as PersonType,
-                buyerGender: data.buyerGender,
-                items: {
-                    create: data.items.map(i => ({
-                        productId: i.productId,
-                        quantity: i.quantity,
-                        price: i.price
-                    }))
+            // Verifica e atualiza estoque item a item
+            for (const i of data.items) {
+                total += (Number(i.price) * Number(i.quantity));
+
+                // Decrementa o estoque por tamanho (se tiver tamanho)
+                if (i.size) {
+                    const field = `stock${i.size}` as 'stockP' | 'stockM' | 'stockG' | 'stockGG';
+                    await tx.product.update({
+                        where: { id: i.productId },
+                        data: { [field]: { decrement: i.quantity } }
+                    });
                 }
             }
+
+            return await tx.sale.create({
+                data: {
+                    orderCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
+                    checkpointId: data.checkpointId,
+                    paymentMethod: data.paymentMethod,
+                    total: total,
+                    status: 'PAID', // Venda manual assume-se paga na hora (dinheiro/maquininha externa)
+                    buyerType: data.buyerType as PersonType,
+                    buyerGender: data.buyerGender,
+                    items: {
+                        create: data.items.map(i => ({
+                            productId: i.productId,
+                            quantity: i.quantity,
+                            price: i.price,
+                            size: i.size
+                        }))
+                    }
+                }
+            });
         });
+
         res.json({ success: true, sale });
     } catch (e) {
         console.error(e);

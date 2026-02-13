@@ -187,6 +187,7 @@ router.get('/', async (req, res) => {
                 m.checkpoint.name.toLowerCase().includes('entrada')
             )
         );
+        // O Total do Evento deve ser APENAS a soma da recepção/entrada
         responseData.totalEventEntrance = receptionCheckpoints.reduce((acc: number, curr: any) => acc + curr.quantity, 0);
 
         // --- LISTA DE DIAS DISPONÍVEIS ---

@@ -1,0 +1,28 @@
+[2026-02-13T01:50:02.372Z] Error /checkpoints: {"stack":"PrismaClientUnknownRequestError: \nInvalid `prisma.checkpoint.findMany()` invocation in\nC:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\src\\modules\\Operations\\index.ts:46:46\n\n  43 // Lista todos os locais para o Select da Staff\n  44 router.get('/checkpoints', async (req, res) => {\n  45     try {\n→ 46         const list = await prisma.checkpoint.findMany(\nValue 'KIDS' not found in enum 'CheckpointCategory'\n    at $n.handleRequestError (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:121:7505)\n    at $n.handleAndLogRequestError (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:121:6623)\n    at $n.request (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:121:6307)\n    at async l (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:130:9633)","message":"\nInvalid `prisma.checkpoint.findMany()` invocation in\nC:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\src\\modules\\Operations\\index.ts:46:46\n\n  43 // Lista todos os locais para o Select da Staff\n  44 router.get('/checkpoints', async (req, res) => {\n  45     try {\n→ 46         const list = await prisma.checkpoint.findMany(\nValue 'KIDS' not found in enum 'CheckpointCategory'","name":"PrismaClientUnknownRequestError","clientVersion":"5.22.0"}
+[2026-02-13T01:50:02.373Z] Stack: PrismaClientUnknownRequestError: 
+Invalid `prisma.checkpoint.findMany()` invocation in
+C:\Users\davia\Documents\github\IBMG\ibmg-backend\src\modules\Operations\index.ts:46:46
+
+  43 // Lista todos os locais para o Select da Staff
+  44 router.get('/checkpoints', async (req, res) => {
+  45     try {
+→ 46         const list = await prisma.checkpoint.findMany(
+Value 'KIDS' not found in enum 'CheckpointCategory'
+    at $n.handleRequestError (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:121:7505)
+    at $n.handleAndLogRequestError (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:121:6623)
+    at $n.request (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:121:6307)
+    at async l (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:130:9633)
+[2026-02-13T01:51:52.368Z] Error /checkpoints: {"stack":"PrismaClientUnknownRequestError: \nInvalid `prisma.checkpoint.findMany()` invocation in\nC:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\src\\modules\\Operations\\index.ts:46:46\n\n  43 // Lista todos os locais para o Select da Staff\n  44 router.get('/checkpoints', async (req, res) => {\n  45     try {\n→ 46         const list = await prisma.checkpoint.findMany(\nValue 'KIDS' not found in enum 'CheckpointCategory'\n    at $n.handleRequestError (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:121:7505)\n    at $n.handleAndLogRequestError (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:121:6623)\n    at $n.request (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:121:6307)\n    at async l (C:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\node_modules\\@prisma\\client\\runtime\\library.js:130:9633)","message":"\nInvalid `prisma.checkpoint.findMany()` invocation in\nC:\\Users\\davia\\Documents\\github\\IBMG\\ibmg-backend\\src\\modules\\Operations\\index.ts:46:46\n\n  43 // Lista todos os locais para o Select da Staff\n  44 router.get('/checkpoints', async (req, res) => {\n  45     try {\n→ 46         const list = await prisma.checkpoint.findMany(\nValue 'KIDS' not found in enum 'CheckpointCategory'","name":"PrismaClientUnknownRequestError","clientVersion":"5.22.0"}
+[2026-02-13T01:51:52.368Z] Stack: PrismaClientUnknownRequestError: 
+Invalid `prisma.checkpoint.findMany()` invocation in
+C:\Users\davia\Documents\github\IBMG\ibmg-backend\src\modules\Operations\index.ts:46:46
+
+  43 // Lista todos os locais para o Select da Staff
+  44 router.get('/checkpoints', async (req, res) => {
+  45     try {
+→ 46         const list = await prisma.checkpoint.findMany(
+Value 'KIDS' not found in enum 'CheckpointCategory'
+    at $n.handleRequestError (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:121:7505)
+    at $n.handleAndLogRequestError (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:121:6623)
+    at $n.request (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:121:6307)
+    at async l (C:\Users\davia\Documents\github\IBMG\ibmg-backend\node_modules\@prisma\client\runtime\library.js:130:9633)

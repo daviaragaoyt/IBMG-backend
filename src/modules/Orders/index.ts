@@ -106,8 +106,9 @@ router.post('/', async (req, res) => {
             if (!product) continue;
             const quantity = Math.max(1, Number(item.quantity));
             const price = Number(product.price);
+            const size = item.size || null;
             total += price * quantity;
-            finalItems.push({ productId: product.id, name: product.name, quantity, price });
+            finalItems.push({ productId: product.id, name: product.name, quantity, price, size });
         }
 
         if (!finalItems.length) return res.status(400).json({ error: 'Produtos inválidos.' });
@@ -206,14 +207,34 @@ router.post('/', async (req, res) => {
 
         const orderCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-        const sale = await prisma.sale.create({
-            data: {
-                orderCode, externalId: billingData.id, total, status: 'PENDING', paymentMethod: 'PIX',
-                buyerName: name,
-                buyerType: buyerType, // 👈 Agora vai funcionar
-                buyerGender: gender || 'M', personId: buyerPersonId,
-                items: { create: finalItems.map(i => ({ productId: i.productId, quantity: i.quantity, price: i.price })) }
+        const sale = await prisma.$transaction(async (tx) => {
+            // Decrementa o estoque
+            for (const i of finalItems) {
+                if (i.size) {
+                    const field = `stock${i.size}` as 'stockP' | 'stockM' | 'stockG' | 'stockGG';
+                    await tx.product.update({
+                        where: { id: i.productId },
+                        data: { [field]: { decrement: i.quantity } }
+                    });
+                }
             }
+
+            return await tx.sale.create({
+                data: {
+                    orderCode, externalId: billingData.id, total, status: 'PENDING', paymentMethod: 'PIX',
+                    buyerName: name,
+                    buyerType: buyerType, // 👈 Agora vai funcionar
+                    buyerGender: gender || 'M', personId: buyerPersonId,
+                    items: {
+                        create: finalItems.map(i => ({
+                            productId: i.productId,
+                            quantity: i.quantity,
+                            price: i.price,
+                            size: i.size
+                        }))
+                    }
+                }
+            });
         });
 
         res.json({

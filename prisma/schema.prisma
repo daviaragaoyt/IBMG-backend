@@ -96,11 +96,19 @@ model ManualEntry {
 // 3. LOJA, PRODUTOS E VENDAS UNIFICADAS
 // ============================================================================
 
+
 model Product {
   id          String   @id @default(uuid())
   name        String
   description String?  // Novo: Para detalhes no modal
   price       Decimal  @db.Decimal(10, 2)
+  
+  // ESTOQUE POR TAMANHO
+  stockP      Int      @default(0)
+  stockM      Int      @default(0)
+  stockG      Int      @default(0)
+  stockGG     Int      @default(0)
+
   category    String   // 'CANTINA' (Visualização) ou 'LOJA' (Venda)
   
   imageUrl    String?  // Imagem principal (Capa)
@@ -122,10 +130,8 @@ model Sale {
   orderCode     String?  
   proofUrl      String?  
   
-  // ADICIONE ESTA LINHA AQUI 👇
   externalId    String?  @unique
-  // -------------------------
-
+  
   buyerName     String?  
   buyerType     PersonType @default(VISITOR)
   
@@ -150,6 +156,7 @@ model SaleItem {
   product   Product @relation(fields: [productId], references: [id])
   quantity  Int
   price     Decimal @db.Decimal(10, 2)
+  size      String? // Novo: P, M, G, GG
 
   @@map("sale_items")
 }
@@ -199,4 +206,5 @@ enum CheckpointCategory {
   PRAYER
   EVANGELISM
   STORE
+  KIDS
 }

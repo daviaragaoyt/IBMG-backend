@@ -2,7 +2,8 @@ import {
     PrismaClient,
     CheckpointCategory,
     PersonType,
-    Role
+    Role,
+    Prisma
 } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -32,6 +33,7 @@ async function main() {
         { name: "Tenda de Oração", category: CheckpointCategory.PRAYER },
         { name: "Casa dos Mártires", category: CheckpointCategory.PRAYER },
         { name: "Tenda Profética", category: CheckpointCategory.PROPHETIC },
+        { name: "Salinha Kids", category: CheckpointCategory.KIDS },
 
     ];
 
@@ -55,6 +57,10 @@ async function main() {
             {
                 name: "Camisa Ekklesia 2026 - Branca",
                 price: 90.00,
+                stockP: 25,
+                stockM: 25,
+                stockG: 25,
+                stockGG: 25,
                 category: "LOJA",
                 description: "Camisa oficial do evento. Algodão premium 30.1.",
                 imageUrl: "camisa-branca.jpeg",
@@ -63,6 +69,10 @@ async function main() {
             {
                 name: "Moletom Ekklesia - Preto",
                 price: 185.00,
+                stockP: 25,
+                stockM: 25,
+                stockG: 25,
+                stockGG: 25,
                 category: "LOJA",
                 description: "Moletom oficial flanelado com capuz.",
                 imageUrl: "casaco-preto.jpeg",
@@ -71,13 +81,17 @@ async function main() {
             {
                 name: "Moletom Ekklesia - Vermelho",
                 price: 185.00,
+                stockP: 25,
+                stockM: 25,
+                stockG: 25,
+                stockGG: 25,
                 category: "LOJA",
                 description: "Edição limitada. Moletom premium vermelho.",
                 imageUrl: "moletom-vermelho.jpeg",
                 images: ["moletom-vermelho.jpeg", "moletom-vermelho1.jpeg", "moletom-vermelho2.jpeg"]
             },
 
-        ]
+        ] as any
     });
 
     // ========================================================================
