@@ -133,6 +133,7 @@ model Sale {
   externalId    String?  @unique
   
   buyerName     String?  
+  buyerPhone    String?    // Novo: Telefone do Comprador (Staff)
   buyerType     PersonType @default(VISITOR)
   
   buyerGender   String?    @default("M") 

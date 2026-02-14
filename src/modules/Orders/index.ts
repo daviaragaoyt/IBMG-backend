@@ -140,6 +140,7 @@ router.post('/', async (req, res) => {
                     status: status || 'PAID', // Staff já registra como PAGO se for PIX Balcão
                     paymentMethod: paymentMethod || 'MONEY',
                     buyerName: name || 'Balcão',
+                    buyerPhone: phone ? String(phone).replace(/\D/g, '') : null,
                     buyerType: buyerType, // 👈 Agora vai funcionar
                     buyerGender: gender || null,
                     personId: buyerPersonId,
@@ -256,7 +257,10 @@ router.get('/check-status/:paymentId', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     try {
         const { paymentId } = req.params;
+        console.log(`🔎 Checando status: ${paymentId}`);
+
         const localSale = await prisma.sale.findUnique({ where: { externalId: paymentId } });
+        console.log(`🛒 Venda local: ${localSale?.orderCode} - Status: ${localSale?.status}`);
 
         if (localSale?.status === 'PAID') return res.json({ status: 'PAID', orderCode: localSale.orderCode });
 
