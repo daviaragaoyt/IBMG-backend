@@ -186,6 +186,23 @@ model GlobalConfig {
 }
 
 // ============================================================================
+// 5. HCAMP — SORTEIO DOS TIMES DA GINCANA
+// ============================================================================
+
+model HcampParticipant {
+  id         String    @id @default(uuid())
+  code       String    @unique              // código do ticket, ex.: HC-7KQ2
+  name       String
+  team       HcampTeam
+  teamNumber Int                             // posição dentro do time (1, 2, 3...)
+  deviceId   String?   @unique              // impede o mesmo celular de sortear 2x
+  createdAt  DateTime  @default(now())
+
+  @@unique([team, teamNumber])
+  @@map("hcamp_participants")
+}
+
+// ============================================================================
 // ENUMS
 // ============================================================================
 
@@ -208,4 +225,11 @@ enum CheckpointCategory {
   EVANGELISM
   STORE
   KIDS
+}
+
+enum HcampTeam {
+  VERMELHO
+  AMARELO
+  AZUL
+  VERDE
 }

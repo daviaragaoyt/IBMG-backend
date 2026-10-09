@@ -14,6 +14,7 @@ import MeetingsRoutes from './modules/Meetings';
 import DashboardRoutes from './modules/Dashboard';
 import ProductsRoutes from './modules/Products';
 import OrdersRoutes from './modules/Orders'; // 👈 IMPORTANTE: Módulo de Pedidos
+import HcampRoutes from './modules/Hcamp'; // Sorteio dos times da gincana (HCAMP)
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -109,6 +110,7 @@ app.use('/operations', OperationsRoutes);
 app.use('/meetings', MeetingsRoutes);
 app.use('/products', ProductsRoutes);
 app.use('/orders', OrdersRoutes); // 👈 AQUI! Isso faz a tela de Pedidos funcionar.
+app.use('/hcamp', HcampRoutes);
 
 
 // Rota de Teste Base

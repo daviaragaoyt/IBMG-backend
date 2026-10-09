@@ -1,22 +1,13 @@
 import { Router } from 'express';
-import axios from 'axios';
 import { prisma } from '../../lib/prisma';
-import { PersonType } from '@prisma/client'; // 👈 IMPORTAÇÃO NECESSÁRIA PARA CORRIGIR O ERRO
+import { PersonType } from '@prisma/client';
+import { mpPreference, mpPayment } from '../../lib/mercadopago';
 
 const router = Router();
 
 // ============================================================================
-// 1. CONFIGURAÇÃO E HELPERS
+// 1. HELPERS
 // ============================================================================
-
-const ABACATE_TOKEN = process.env.PSALMSKEY;
-if (!ABACATE_TOKEN) console.error('❌ PSALMSKEY não configurada');
-
-const gatewayApi = axios.create({
-    baseURL: 'https://api.abacatepay.com/v1',
-    headers: { Authorization: `Bearer ${ABACATE_TOKEN}`, 'Content-Type': 'application/json' },
-    timeout: 15000
-});
 
 const normalizeCPF = (cpf: string) => cpf.replace(/\D/g, '');
 
@@ -36,31 +27,45 @@ function isValidCPF(cpf: string) {
 }
 
 // ============================================================================
-// 2. WEBHOOK (AUTOMÁTICO)
+// 2. WEBHOOK MERCADO PAGO
 // ============================================================================
-router.post('/webhook/abacatepay', async (req, res) => {
+router.post('/webhook/mercadopago', async (req, res) => {
     try {
-        const { event, data } = req.body;
-        console.log('🥑 Webhook:', event);
+        const { type, data } = req.body;
+        // O Mercado Pago envia 'action' ou 'type'. Se for 'payment', verificamos.
 
-        if (event !== 'billing.paid') return res.sendStatus(200);
+        const paymentId = data?.id || req.query.id;
+        const topic = type || req.query.topic; // topic pode vir na URL
 
-        const paymentId = data?.billing?.id || data?.id;
-        if (!paymentId) return res.sendStatus(200);
+        console.log('🥑 Webhook MP:', topic, paymentId);
 
-        const sale = await prisma.sale.findUnique({ where: { externalId: paymentId } });
-        if (!sale || sale.status === 'PAID') return res.sendStatus(200);
+        // Ajuste: MP manda topic='payment' na query string muitas vezes
+        // Se topic for payment ou action for payment.created/updated
+        if ((topic === 'payment' || req.body.action?.startsWith('payment')) && paymentId) {
+            const payment = await mpPayment.get({ id: paymentId });
 
-        await prisma.sale.update({
-            where: { id: sale.id },
-            data: { status: 'PAID' }
-        });
+            if (payment && payment.status === 'approved') {
+                const externalReference = payment.external_reference;
 
-        console.log(`🚀 Venda ${sale.orderCode} PAGA via Webhook.`);
+                if (externalReference) {
+                    // ERROR FIX: findUnique -> findFirst (orderCode is not unique in schema)
+                    const sale = await prisma.sale.findFirst({ where: { orderCode: externalReference } });
+
+                    if (sale && sale.status !== 'PAID') {
+                        await prisma.sale.update({
+                            where: { id: sale.id },
+                            data: { status: 'PAID', externalId: String(payment.id) }
+                        });
+                        console.log(`🚀 Venda ${sale.orderCode} PAGA via Webhook MP.`);
+                    }
+                }
+            }
+        }
+
         res.sendStatus(200);
     } catch (err: any) {
         console.error('❌ Erro webhook:', err.message);
-        res.status(500).json({ error: 'Internal Server Error' });
+        res.sendStatus(500);
     }
 });
 
@@ -113,100 +118,95 @@ router.post('/', async (req, res) => {
 
         if (!finalItems.length) return res.status(400).json({ error: 'Produtos inválidos.' });
 
-        // --- B. Define Tipo de Comprador (CORRIGIDO O ERRO DE TYPE) ---
-        // O padrão é VISITOR, mas tipado corretamente como PersonType
+        // --- B. Define Tipo de Comprador ---
         let buyerType: PersonType = 'VISITOR';
         let buyerPersonId = personId || null;
 
         if (manualType && (manualType === 'MEMBER' || manualType === 'VISITOR')) {
-            // 1. Prioridade: Botão do Modal (Forçamos o tipo para evitar erro de string)
             buyerType = manualType as PersonType;
         } else if (personId) {
-            // 2. Se não marcou, mas tem cadastro
             const person = await prisma.person.findUnique({ where: { id: personId } });
-            if (person) buyerType = person.type; // Aqui já vem tipado do banco
+            if (person) buyerType = person.type;
         }
 
 
         // --- C. ROTA STAFF (Dinheiro/Cartão OU PIX Manual de Balcão) ---
-        // Se for PIX e for Staff, entra aqui também
-        if ((paymentMethod && paymentMethod !== 'PIX') || (isStaffAction && paymentMethod === 'PIX')) {
+        // Se for PIX e NÃO tiver email, assume balcão manual (para não gerar link)
+        // Se tiver email, assume que o Staff quer gerar link (cai no D)
+        const wantsLink = isStaffAction && paymentMethod === 'PIX' && email;
+
+        if ((paymentMethod && paymentMethod !== 'PIX') || (isStaffAction && paymentMethod === 'PIX' && !wantsLink)) {
             const orderCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
             const sale = await prisma.sale.create({
                 data: {
                     orderCode,
                     total,
-                    status: status || 'PAID', // Staff já registra como PAGO se for PIX Balcão
+                    status: status || 'PAID',
                     paymentMethod: paymentMethod || 'MONEY',
                     buyerName: name || 'Balcão',
                     buyerPhone: phone ? String(phone).replace(/\D/g, '') : null,
-                    buyerType: buyerType, // 👈 Agora vai funcionar
+                    buyerType: buyerType,
                     buyerGender: gender || null,
                     personId: buyerPersonId,
                     items: {
                         create: finalItems.map(i => ({
-                            productId: i.productId, quantity: i.quantity, price: i.price
+                            productId: i.productId, quantity: i.quantity, price: i.price, size: i.size
                         }))
                     }
                 },
                 include: { items: { include: { product: true } } }
             });
 
+            // Decrementa estoque staff
+            for (const i of finalItems) {
+                if (i.size) {
+                    const field = `stock${i.size}` as 'stockP' | 'stockM' | 'stockG' | 'stockGG';
+                    await prisma.product.update({
+                        where: { id: i.productId },
+                        data: { [field]: { decrement: i.quantity } }
+                    });
+                }
+            }
+
             return res.json({ sale: { ...sale, total: Number(sale.total) } });
         }
 
-        // --- D. ROTA ONLINE (PIX / AbacatePay) - APENAS SE NÃO FOR STAFF ---
-        // OBS: Relaxando validação para caso o frontend não envie tudo (pedido do usuário).
-        // if (!name || !email || !cpf || !phone) {
-        //    return res.status(400).json({ error: 'Para PIX Online, preencha todos os dados.' });
-        // }
+        // --- D. ROTA ONLINE (Mercado Pago) ---
 
-        const cleanCPF = normalizeCPF(cpf);
-        const cleanPhone = String(phone).replace(/\D/g, '');
-        if (!isValidCPF(cleanCPF)) return res.status(400).json({ error: 'CPF inválido.' });
+        const cleanCPF = normalizeCPF(cpf || '');
+        const cleanPhone = String(phone || '').replace(/\D/g, '');
 
-        // Upsert Pessoa
-        const person = await prisma.person.upsert({
-            where: { email },
-            update: { name, phone: cleanPhone, age: Number(age) || null, church, gender },
-            create: { name, email, phone: cleanPhone, age: Number(age) || null, church, gender: gender || 'M', type: 'VISITOR' }
-        });
-
-        // Se não veio manualType, usa o do cadastro. Se veio, usa o manualType.
-        // Convertendo para PersonType para evitar erro
-        if (!manualType) {
-            buyerType = person.type;
-        } else {
-            // Garante que é um dos valores válidos do Enum
-            buyerType = (manualType === 'MEMBER' || manualType === 'VISITOR') ? manualType as PersonType : 'VISITOR';
+        if (email) {
+            const person = await prisma.person.upsert({
+                where: { email },
+                update: { name, phone: cleanPhone || undefined, age: Number(age) || null, church, gender },
+                create: { name, email, phone: cleanPhone, age: Number(age) || null, church, gender: gender || 'M', type: 'VISITOR' }
+            });
+            buyerPersonId = person.id;
+            if (!manualType) buyerType = person.type;
         }
-
-        buyerPersonId = person.id;
-
-        // Integração Abacate
-        let customerId = '';
-        try {
-            const resCustomer = await gatewayApi.post('/customer/create', { name, email, cellphone: cleanPhone, taxId: cleanCPF });
-            customerId = resCustomer.data?.data?.id || resCustomer.data?.id;
-        } catch (e) {
-            const list = await gatewayApi.get('/customer/list');
-            const found = (list.data?.data || []).find((c: any) => c.email === email || c.taxId === cleanCPF);
-            if (found) customerId = found.id;
-        }
-
-        if (!customerId) return res.status(400).json({ error: 'Erro no gateway de pagamento.' });
-
-        const billing = await gatewayApi.post('/billing/create', {
-            frequency: 'ONE_TIME', methods: ['PIX'], customerId,
-            products: finalItems.map(i => ({ externalId: i.productId, name: i.name, quantity: i.quantity, price: Math.round(Number(i.price) * 100) })),
-            returnUrl: 'https://ibmg-three.vercel.app/ekklesia', completionUrl: 'https://ibmg-three.vercel.app/ekklesia'
-        });
-
-        const billingData = billing.data?.data || billing.data;
-        if (!billingData?.id) return res.status(500).json({ error: 'Erro ao gerar PIX.' });
 
         const orderCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+        // Cria Pagamento PIX no Mercado Pago (Checkout Transparente)
+        const paymentData = await mpPayment.create({
+            body: {
+                transaction_amount: total,
+                description: `Pedido ${orderCode} - IBMG`,
+                payment_method_id: 'pix',
+                payer: {
+                    email: email || 'cliente@email.com',
+                    first_name: name || 'Cliente'
+                },
+                external_reference: orderCode
+            }
+        });
+
+        if (!paymentData.id) return res.status(500).json({ error: 'Erro ao gerar pagamento PIX.' });
+
+        const qrCode = paymentData.point_of_interaction?.transaction_data?.qr_code;
+        const qrCodeBase64 = paymentData.point_of_interaction?.transaction_data?.qr_code_base64;
 
         const sale = await prisma.$transaction(async (tx) => {
             // Decrementa o estoque
@@ -222,10 +222,15 @@ router.post('/', async (req, res) => {
 
             return await tx.sale.create({
                 data: {
-                    orderCode, externalId: billingData.id, total, status: 'PENDING', paymentMethod: 'PIX',
+                    orderCode,
+                    externalId: String(paymentData.id),
+                    total,
+                    status: 'PENDING',
+                    paymentMethod: 'PIX',
                     buyerName: name,
-                    buyerType: buyerType, // 👈 Agora vai funcionar
-                    buyerGender: gender || 'M', personId: buyerPersonId,
+                    buyerType: buyerType,
+                    buyerGender: gender || 'M',
+                    personId: buyerPersonId,
                     items: {
                         create: finalItems.map(i => ({
                             productId: i.productId,
@@ -240,7 +245,11 @@ router.post('/', async (req, res) => {
 
         res.json({
             sale: { ...sale, total: Number(sale.total) },
-            pixData: { paymentId: billingData.id, copyPaste: billingData.pix?.code || billingData.url }
+            pixData: {
+                paymentId: String(paymentData.id),
+                url: qrCodeBase64 ? `data:image/jpeg;base64,${qrCodeBase64}` : null,
+                copyPaste: qrCode || null
+            }
         });
 
     } catch (err: any) {
@@ -257,42 +266,50 @@ router.get('/check-status/:paymentId', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     try {
         const { paymentId } = req.params;
-        console.log(`🔎 Checando status: ${paymentId}`);
 
         const localSale = await prisma.sale.findUnique({ where: { externalId: paymentId } });
-        console.log(`🛒 Venda local: ${localSale?.orderCode} - Status: ${localSale?.status}`);
+        if (!localSale) return res.json({ status: 'PENDING' });
 
-        if (localSale?.status === 'PAID') return res.json({ status: 'PAID', orderCode: localSale.orderCode });
+        if (localSale.status === 'PAID') return res.json({ status: 'PAID', orderCode: localSale.orderCode });
 
-        const response = await gatewayApi.get('/billing/list', { params: { id: paymentId } });
-        const list = response.data?.data || response.data;
-        const bill = Array.isArray(list) ? list.find((b: any) => b.id === paymentId) : list;
+        // Tenta buscar no MP pelo external_reference (orderCode)
+        if (localSale.orderCode) {
+            // ERROR FIX: Ensure external_reference is not null/undefined and cast if needed
+            const search = await mpPayment.search({
+                options: { external_reference: localSale.orderCode }
+            });
 
-        if (bill && (bill.status === 'PAID' || bill.status === 'COMPLETED')) {
-            if (localSale && localSale.status !== 'PAID') {
-                await prisma.sale.update({ where: { id: localSale.id }, data: { status: 'PAID' } });
+            const completedPayment = search.results?.find(p => p.status === 'approved');
+
+            if (completedPayment) {
+                await prisma.sale.update({
+                    where: { id: localSale.id },
+                    data: { status: 'PAID', externalId: String(completedPayment.id) }
+                });
+                return res.json({ status: 'PAID', orderCode: localSale.orderCode });
             }
-            return res.json({ status: 'PAID', orderCode: localSale?.orderCode });
         }
+
         return res.json({ status: 'PENDING' });
-    } catch (err) { return res.json({ status: 'PENDING' }); }
+    } catch (err) {
+        console.error(err);
+        return res.json({ status: 'PENDING' });
+    }
 });
 
 router.get('/pending', async (req, res) => {
     try {
-        // 1. FILTRO DE PENDÊNCIAS (Rota /pending)
         const sales = await prisma.sale.findMany({
             where: {
                 OR: [
-                    { status: 'PAID' }, // Vendas Pagas aparecem
-                    { status: 'PENDING', paymentMethod: { not: 'PIX' } } // Pendentes aparecem SÓ se NÃO forem Pix Online
+                    { status: 'PAID' },
+                    { status: 'PENDING', paymentMethod: { not: 'PIX' } }
                 ]
             },
             include: { items: { include: { product: true } }, person: true },
             orderBy: { timestamp: 'desc' }
         });
 
-        // Conversão de Decimal para Number (Essencial para não quebrar o JSON)
         const safeSales = sales.map(sale => ({
             ...sale,
             total: Number(sale.total),
@@ -350,7 +367,6 @@ router.get('/:code', async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erro" }); }
 });
 
-// Rota PATCH (Legado)
 router.patch('/:id/deliver', async (req, res) => {
     try {
         const { id } = req.params;
