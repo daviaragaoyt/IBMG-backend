@@ -6,8 +6,9 @@ import { requireStaff } from '../../lib/auth';
 
 // =====================================================================
 // HCAMP — Sorteio equilibrado dos times da gincana
-//   POST   /hcamp/draw    (público)  { name, deviceId? } -> ticket
-//   GET    /hcamp/me?deviceId=...  (público) ticket deste celular (404 se não houver)
+//   POST   /hcamp/draw    (público)  { name } -> ticket  (1 ticket por NOME COMPLETO)
+//   GET    /hcamp/tickets?codes=A,B  (público) tickets por código (para "Meus tickets")
+//   GET    /hcamp/me?deviceId=...  (público) legado: ticket de um celular
 //   GET    /hcamp/config  (público)  data da revelação dos times
 //   PUT    /hcamp/config  (staff)    { revealAt } muda a data da revelação
 //   POST   /hcamp/reveal  (público)  { name, code? } -> ticket com o time (só após a revelação)
@@ -25,10 +26,19 @@ const TEAMS: HcampTeam[] = ['VERMELHO', 'AMARELO', 'AZUL', 'VERDE'];
 // assim dois celulares ao mesmo tempo nunca desequilibram os times.
 const DRAW_LOCK_KEY = 74220026;
 
+// Nome completo: pelo menos 2 palavras de 2+ letras, só letras (com acento), hífen ou apóstrofo.
+const NAME_WORD = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*$/;
+export const isFullName = (n: string) => {
+    const words = n.trim().split(/\s+/).filter(Boolean);
+    return words.every(w => NAME_WORD.test(w)) && words.filter(w => w.length >= 2).length >= 2;
+};
+
 const DrawSchema = z.object({
-    name: z.string().trim().min(5, 'Digite nome e sobrenome.').max(60),
-    deviceId: z.string().trim().min(8).max(64).optional(),
+    name: z.string().trim().max(60, 'Nome muito longo.')
+        .refine(isFullName, 'Digite seu nome completo (nome e sobrenome), só com letras.'),
 });
+
+class DuplicateNameError extends Error { }
 
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sem 0/O/1/I/L
 const genCode = () => {
@@ -75,17 +85,15 @@ router.post('/draw', async (req, res) => {
         return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Dados inválidos.' });
     }
     const name = parsed.data.name.replace(/\s+/g, ' ');
-    const deviceId = parsed.data.deviceId;
 
     try {
         const participant = await prisma.$transaction(async (tx) => {
             await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${DRAW_LOCK_KEY})`);
 
-            // Mesmo celular sorteando de novo -> devolve a mesma cor
-            if (deviceId) {
-                const existing = await tx.hcampParticipant.findUnique({ where: { deviceId } });
-                if (existing) return existing;
-            }
+            // 1 ticket por nome: se o nome (sem acento/maiúscula) já existe, não gera outro
+            const key = normalizeName(name);
+            const names = await tx.hcampParticipant.findMany({ select: { name: true } });
+            if (names.some(p => normalizeName(p.name) === key)) throw new DuplicateNameError();
 
             const grouped = await tx.hcampParticipant.groupBy({ by: ['team'], _count: { _all: true } });
             const counts = emptyCounts();
@@ -100,13 +108,16 @@ router.post('/draw', async (req, res) => {
             while (await tx.hcampParticipant.findUnique({ where: { code } })) code = genCode();
 
             return tx.hcampParticipant.create({
-                data: { code, name, team, teamNumber: counts[team] + 1, deviceId },
+                data: { code, name, team, teamNumber: counts[team] + 1 },
             });
         }, { timeout: 15000 });
 
         console.log(`🎲 HCAMP: ${participant.name} -> ${participant.team} #${participant.teamNumber}`);
         res.json(toPublicTicket(participant, isRevealed(await getRevealAt())));
     } catch (e) {
+        if (e instanceof DuplicateNameError) {
+            return res.status(409).json({ error: 'Esse nome já tem um ticket. Cada pessoa só pode ser sorteada uma vez.' });
+        }
         console.error('Erro no sorteio HCAMP:', e);
         res.status(500).json({ error: 'Não foi possível sortear agora. Tente novamente.' });
     }
@@ -125,6 +136,22 @@ router.get('/me', async (req, res) => {
         res.json(toPublicTicket(p, isRevealed(await getRevealAt())));
     } catch (e) {
         console.error('Erro em /hcamp/me:', e);
+        res.status(500).json({ error: 'Erro interno.' });
+    }
+});
+
+// ---------------------------------------------------------------------
+// 1b2. TICKETS POR CÓDIGO (público) — "Meus tickets" de um celular
+// ---------------------------------------------------------------------
+router.get('/tickets', async (req, res) => {
+    const codes = String(req.query.codes || '').split(',').map(c => c.trim().toUpperCase()).filter(Boolean).slice(0, 30);
+    if (!codes.length) return res.json([]);
+    try {
+        const list = await prisma.hcampParticipant.findMany({ where: { code: { in: codes } } });
+        const revealed = isRevealed(await getRevealAt());
+        res.json(list.map(p => toPublicTicket(p, revealed)));
+    } catch (e) {
+        console.error('Erro em /hcamp/tickets:', e);
         res.status(500).json({ error: 'Erro interno.' });
     }
 });
